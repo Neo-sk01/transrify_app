@@ -1,0 +1,286 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+} from 'react-native';
+import { useForm, Controller } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as Location from 'expo-location';
+import { Screen } from '../components/Screen';
+import { Logo } from '../components/Logo';
+import { TextInput } from '../components/TextInput';
+import { Button } from '../components/Button';
+import { loginFormSchema, LoginFormData } from '../lib/validation';
+import { authAdapter } from '../lib/auth';
+import { getErrorMessage } from '../lib/errors';
+import { useAuthStore } from '../state/useAuthStore';
+import { colors, spacing, typography } from '../lib/theme';
+
+export interface LoginScreenProps {
+  navigation: any; // Will be typed by React Navigation
+}
+
+/**
+ * LoginScreen component
+ * Handles user authentication with customer reference and PIN
+ * 
+ * Requirements:
+ * - 1.1: Display login screen when no auth token exists
+ * - 1.2: Display customer reference, PIN inputs, and sign-in button
+ * - 1.3: Display "Welcome back" title and "Sign in to continue" subtitle
+ * - 1.4: Display disabled placeholder links
+ * - 1.5: Mask PIN input
+ * - 2.3: Disable button when validation fails
+ * - 2.4: Show loading spinner during authentication
+ * - 2.5: Prevent double-submission
+ * - 4.3: Handle FAIL verdict with error message
+ * - 4.4: Navigate to Landing on NORMAL/DURESS verdict
+ * - 10.1: Request location permission on first launch
+ */
+export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
+  const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [locationRequested, setLocationRequested] = useState(false);
+  const setSession = useAuthStore((state) => state.setSession);
+
+  // Initialize React Hook Form with Zod validation
+  const {
+    control,
+    handleSubmit,
+    formState: { errors, isValid },
+  } = useForm<LoginFormData>({
+    resolver: zodResolver(loginFormSchema),
+    mode: 'onChange', // Validate on change for real-time feedback
+    defaultValues: {
+      customerRef: '',
+      pin: '',
+    },
+  });
+
+  // Request location permission on first launch
+  useEffect(() => {
+    const requestLocationPermission = async () => {
+      if (!locationRequested) {
+        try {
+          await Location.requestForegroundPermissionsAsync();
+          setLocationRequested(true);
+        } catch (error) {
+          console.warn('Location permission request failed:', error);
+        }
+      }
+    };
+
+    requestLocationPermission();
+  }, [locationRequested]);
+
+  /**
+   * Handle sign in form submission
+   * Requirements:
+   * - Call auth adapter with credentials
+   * - Handle NORMAL/DURESS verdicts by navigating to Landing
+   * - Handle FAIL verdict by displaying error
+   * - Clear error on input change
+   */
+  const onSubmit = async (data: LoginFormData) => {
+    try {
+      setIsSubmitting(true);
+      setError(null);
+
+      // Call auth adapter to authenticate
+      const response = await authAdapter.signIn(data.customerRef, data.pin);
+
+      // Handle FAIL verdict
+      if (response.verdict === 'FAIL') {
+        setError('Invalid credentials. Please try again.');
+        return;
+      }
+
+      // Handle NORMAL and DURESS verdicts
+      // Both navigate to Landing screen (identical UI per requirement 9.1)
+      if (response.verdict === 'NORMAL' || response.verdict === 'DURESS') {
+        // Update auth store with session data
+        setSession(
+          {
+            customerRef: data.customerRef,
+            sessionId: response.sessionId,
+          },
+          response.verdict
+        );
+
+        // Navigate to Landing screen
+        navigation.navigate('Landing');
+      }
+    } catch (err) {
+      // Map error to user-friendly message
+      const errorMessage = getErrorMessage(err);
+      setError(errorMessage);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  /**
+   * Clear error when user modifies input
+   * Requirement: 5.6 - Clear error on input change
+   */
+  const handleInputChange = () => {
+    if (error) {
+      setError(null);
+    }
+  };
+
+  return (
+    <Screen withKeyboardAvoid>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Logo */}
+        <View style={styles.logoContainer}>
+          <Logo size="large" />
+        </View>
+
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.title}>Welcome back</Text>
+          <Text style={styles.subtitle}>Sign in to continue</Text>
+        </View>
+
+        {/* Form */}
+        <View style={styles.form}>
+          {/* Customer Reference Input */}
+          <Controller
+            control={control}
+            name="customerRef"
+            render={({ field: { onChange, onBlur, value } }) => (
+              <TextInput
+                label="Customer Reference"
+                value={value}
+                onChangeText={(text) => {
+                  onChange(text);
+                  handleInputChange();
+                }}
+                onBlur={onBlur}
+                placeholder="Enter your customer reference"
+                error={errors.customerRef?.message}
+                accessibilityLabel="Customer reference input"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            )}
+          />
+
+          {/* PIN Input */}
+          <Controller
+            control={control}
+            name="pin"
+            render={({ field: { onChange, onBlur, value } }) => (
+              <TextInput
+                label="PIN"
+                value={value}
+                onChangeText={(text) => {
+                  onChange(text);
+                  handleInputChange();
+                }}
+                onBlur={onBlur}
+                placeholder="Enter your PIN"
+                secureTextEntry
+                keyboardType="numeric"
+                error={errors.pin?.message}
+                accessibilityLabel="PIN input"
+              />
+            )}
+          />
+
+          {/* Error Message Display */}
+          {error && (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          )}
+
+          {/* Sign In Button */}
+          <Button
+            title="Sign In"
+            onPress={handleSubmit(onSubmit)}
+            loading={isSubmitting}
+            disabled={!isValid || isSubmitting}
+            accessibilityLabel="Sign in button"
+          />
+
+          {/* Disabled Placeholder Links */}
+          <View style={styles.linksContainer}>
+            <TouchableOpacity disabled style={styles.link}>
+              <Text style={styles.linkTextDisabled}>Forgot password?</Text>
+            </TouchableOpacity>
+            <TouchableOpacity disabled style={styles.link}>
+              <Text style={styles.linkTextDisabled}>Create account</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </ScrollView>
+    </Screen>
+  );
+};
+
+const styles = StyleSheet.create({
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingVertical: spacing.xxl,
+  },
+  logoContainer: {
+    alignItems: 'center',
+    marginBottom: spacing.xxl,
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: spacing.xxl,
+  },
+  title: {
+    fontSize: typography.h1.fontSize,
+    fontWeight: typography.h1.fontWeight,
+    lineHeight: typography.h1.lineHeight,
+    color: colors.textPrimary,
+    marginBottom: spacing.sm,
+  },
+  subtitle: {
+    fontSize: typography.body.fontSize,
+    fontWeight: typography.body.fontWeight,
+    lineHeight: typography.body.lineHeight,
+    color: colors.textSecondary,
+  },
+  form: {
+    width: '100%',
+  },
+  errorContainer: {
+    marginBottom: spacing.lg,
+  },
+  errorText: {
+    fontSize: typography.caption.fontSize,
+    fontWeight: typography.caption.fontWeight,
+    lineHeight: typography.caption.lineHeight,
+    color: colors.error,
+    textAlign: 'center',
+  },
+  linksContainer: {
+    marginTop: spacing.xl,
+    alignItems: 'center',
+    gap: spacing.md,
+  },
+  link: {
+    paddingVertical: spacing.sm,
+  },
+  linkTextDisabled: {
+    fontSize: typography.caption.fontSize,
+    fontWeight: typography.caption.fontWeight,
+    lineHeight: typography.caption.lineHeight,
+    color: colors.textDisabled,
+  },
+});
+
+export default LoginScreen;

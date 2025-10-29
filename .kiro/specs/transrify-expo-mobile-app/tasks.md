@@ -118,7 +118,7 @@
   - Export Screen component for use in all screens
   - _Requirements: 13.1_
 
-- [ ] 13. Create Logo component
+- [x] 13. Create Logo component
 
   - Create components/Logo.tsx with Transrify branding
   - Use SVG or PNG asset for logo
@@ -126,7 +126,7 @@
   - Export Logo component for use in screens
   - _Requirements: 7.1_
 
-- [ ] 14. Implement LoginScreen
+- [x] 14. Implement LoginScreen
 
   - Create screens/LoginScreen.tsx with form layout
   - Add header with "Welcome back" title and "Sign in to continue" subtitle
@@ -144,7 +144,7 @@
   - Request location permission on first launch
   - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.3, 2.4, 2.5, 4.3, 4.4, 10.1_
 
-- [ ] 15. Implement LandingScreen
+- [x] 15. Implement LandingScreen
 
   - Create screens/LandingScreen.tsx with header and card layout
   - Display Logo and customer reference in header
@@ -156,7 +156,7 @@
   - Read user data from auth store
   - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 8.4, 8.5, 9.1, 9.2, 9.3, 9.4, 9.5_
 
-- [ ] 16. Implement navigation with auth gate
+- [x] 16. Implement navigation with auth gate
 
   - Create app/AppNavigator.tsx with Stack Navigator
   - Define AuthStack with Login screen
@@ -167,7 +167,7 @@
   - Call initializeAuth on app mount
   - _Requirements: 6.1, 6.2, 6.3, 6.4_
 
-- [ ] 17. Wire up App.tsx with navigation and state
+- [x] 17. Wire up App.tsx with navigation and state
 
   - Import AppNavigator and wrap with NavigationContainer
   - Import useAuthStore and call initializeAuth on mount
@@ -175,7 +175,7 @@
   - Configure status bar for dark theme
   - _Requirements: 6.1, 6.4_
 
-- [ ] 18. Write unit tests for validation schemas
+- [x] 18. Write unit tests for validation schemas
 
   - Create tests/validation.test.ts
   - Test customerRefSchema with valid and invalid inputs
@@ -183,7 +183,7 @@
   - Verify error messages for validation failures
   - _Requirements: 14.1, 14.2_
 
-- [ ] 19. Write unit tests for storage utilities
+- [x] 19. Write unit tests for storage utilities
 
   - Create tests/storage.test.ts
   - Test setSessionId and getSessionId
