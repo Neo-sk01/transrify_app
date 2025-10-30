@@ -8,6 +8,7 @@ export const colors = {
   // Backgrounds
   background: '#0B0B10',      // Screen background
   surface: '#15151E',         // Card/surface background
+  card: '#15151E',            // Card background (same as surface)
   
   // Primary
   primary: '#7C4DFF',         // Primary actions, focus states
@@ -21,8 +22,8 @@ export const colors = {
   
   // Status
   error: '#FF5252',           // Error messages
-  success: '#4CAF50',         // Success states (future)
-  warning: '#FFC107',         // Warning states (future)
+  success: '#4CAF50',         // Success states
+  warning: '#FFC107',         // Warning states
   
   // Borders
   border: '#2A2A35',          // Default borders
