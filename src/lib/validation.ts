@@ -24,9 +24,19 @@ export const pinSchema = z
   .regex(/^\d+$/, 'PIN must contain only digits');
 
 /**
+ * Validation schema for tenant key
+ * Alphanumeric string with minimum 3 characters
+ */
+export const tenantKeySchema = z
+  .string()
+  .min(3, 'Tenant key must be at least 3 characters')
+  .max(100, 'Tenant key must be at most 100 characters');
+
+/**
  * Combined login form validation schema
  */
 export const loginFormSchema = z.object({
+  tenantKey: tenantKeySchema,
   customerRef: customerRefSchema,
   pin: pinSchema,
 });

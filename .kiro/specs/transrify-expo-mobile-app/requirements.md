@@ -215,3 +215,87 @@ Transrify is an Expo-managed React Native mobile application that provides a dua
 3. THE Transrify App SHALL NOT hardcode sensitive credentials in the source code
 4. THE Transrify App SHALL support different API base URLs for development, staging, and production environments
 5. THE Transrify App SHALL validate that the tenant key is present before making authentication requests
+
+### Requirement 17
+
+**User Story:** As a user in duress mode, I want the app to enable limited mode monitoring, so that my activity can be tracked for safety purposes.
+
+#### Acceptance Criteria
+
+1. WHEN the API returns verdict "DURESS", THE Transrify App SHALL set limitedMode flag to true in the auth state
+2. WHEN limitedMode is true, THE Landing screen SHALL display a subtle "Limited Mode" pill indicator
+3. THE Transrify App SHALL persist the limitedMode flag in SecureStore alongside the session data
+4. WHEN the user logs out, THE Transrify App SHALL clear the limitedMode flag
+5. THE limitedMode indicator SHALL be subtle and not alarming to avoid alerting potential attackers
+
+### Requirement 18
+
+**User Story:** As a user, I want the app to verify my session on app resume, so that my authentication remains valid.
+
+#### Acceptance Criteria
+
+1. WHEN THE Transrify App resumes from background, THE Transrify App SHALL call the session verify endpoint with the current session ID
+2. THE Transrify App SHALL send a GET request to "/v1/sessions/verify" with the session ID as a query parameter
+3. WHEN the verify response indicates the session is invalid, THE Transrify App SHALL clear the session and navigate to Login
+4. WHEN the verify response indicates the session is valid, THE Transrify App SHALL continue with the current session
+5. THE Transrify App SHALL handle network errors during verification gracefully without logging out the user
+
+### Requirement 19
+
+**User Story:** As a user in duress mode, I want to capture evidence securely, so that authorities can be notified with proof.
+
+#### Acceptance Criteria
+
+1. WHEN limitedMode is true AND the user captures media, THE Transrify App SHALL request a presigned upload URL from the API
+2. THE Transrify App SHALL send a POST request to "/v1/evidence/presign" with incident ID and content type
+3. THE Transrify App SHALL receive a presigned PUT URL and S3 object key from the presign response
+4. THE Transrify App SHALL upload the media file to the presigned URL using a PUT request
+5. THE Transrify App SHALL compute the SHA-256 hash of the uploaded file client-side using expo-crypto
+
+### Requirement 20
+
+**User Story:** As a user in duress mode, I want evidence uploads to be finalized, so that the evidence is properly recorded.
+
+#### Acceptance Criteria
+
+1. WHEN the media upload to S3 completes successfully, THE Transrify App SHALL send a POST request to "/evidence/finalize"
+2. THE finalize request SHALL include incident ID, evidence kind, S3 key, file size, and SHA-256 hash
+3. THE Transrify App SHALL support evidence kinds: VIDEO, AUDIO, PHOTO, NEARBY, TEXT
+4. WHEN the finalize response is successful, THE Transrify App SHALL receive a confirmation with evidence ID
+5. THE Transrify App SHALL handle finalize errors by retrying up to 2 times with exponential backoff
+
+### Requirement 21
+
+**User Story:** As a user, I want the app to request necessary permissions for evidence collection, so that I can capture media when needed.
+
+#### Acceptance Criteria
+
+1. WHEN evidence collection is initiated, THE Transrify App SHALL request camera permission if not already granted
+2. WHEN audio evidence is needed, THE Transrify App SHALL request microphone permission if not already granted
+3. THE Transrify App SHALL use expo-camera for camera access
+4. THE Transrify App SHALL use expo-av for audio recording
+5. WHEN permissions are denied, THE Transrify App SHALL display an error message and not attempt to capture media
+
+### Requirement 22
+
+**User Story:** As a developer, I want the app to handle API rate limits gracefully, so that users have a smooth experience.
+
+#### Acceptance Criteria
+
+1. WHEN the API returns HTTP status 429, THE Transrify App SHALL recognize this as a rate limit error
+2. THE Transrify App SHALL implement exponential backoff with jitter for rate-limited requests
+3. THE first retry SHALL wait 800-1200 milliseconds before retrying
+4. THE Transrify App SHALL limit retries to a maximum of 2 attempts for rate-limited requests
+5. WHEN rate limit retries are exhausted, THE Transrify App SHALL display the error message "Too many requests. Please try again in a moment."
+
+### Requirement 23
+
+**User Story:** As a developer, I want a typed API client, so that all API calls are type-safe and consistent.
+
+#### Acceptance Criteria
+
+1. THE Transrify App SHALL implement a generic API client function that accepts a path and request options
+2. THE API client SHALL automatically include Content-Type header as "application/json"
+3. THE API client SHALL construct full URLs by combining the base URL with the provided path
+4. THE API client SHALL parse JSON responses and return typed data
+5. THE API client SHALL throw errors for non-2xx HTTP status codes with the status code included

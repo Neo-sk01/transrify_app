@@ -1,7 +1,7 @@
 import React from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
-import RootNavigator from './src/app/AppNavigator';
+import RootNavigator from './src/navigation/AppNavigator';
 
 /**
  * App - Root component of the Transrify mobile application

@@ -4,21 +4,21 @@
 
   - Create new Expo project with TypeScript template using Expo SDK 52
   - Install core dependencies: React Navigation, Zustand, React Hook Form, Zod
-  - Install Expo packages: expo-secure-store, expo-location, expo-constants, expo-application
+  - Install Expo packages: expo-secure-store, expo-location, expo-constants, expo-application, expo-crypto, expo-camera, expo-av
   - Install dev dependencies: Jest, @testing-library/react-native, TypeScript types
   - Configure TypeScript with strict mode enabled
   - Set up project structure with /src folder and subdirectories
-  - _Requirements: 15.1, 15.2, 15.5_
+  - _Requirements: 15.1, 15.2, 15.5, 19.5, 21.3, 21.4_
 
 - [x] 2. Configure app settings and environment
 
   - Configure app.json with app name, version, orientation, and dark theme
-  - Add iOS location permission description to app.json
-  - Add Android location permissions to app.json
-  - Create .env.example file with API_BASE_URL, USE_MOCK_AUTH, APP_ENV variables
+  - Add iOS location, camera, and microphone permission descriptions to app.json
+  - Add Android location, camera, and audio permissions to app.json
+  - Create .env.example file with API_BASE_URL, TENANT_KEY variables
   - Configure babel to support environment variables
   - Set up splash screen and app icon placeholders
-  - _Requirements: 10.1, 16.2, 16.3, 16.4_
+  - _Requirements: 10.1, 16.2, 16.3, 16.4, 21.1, 21.2_
 
 - [x] 3. Implement theme and design system
 
@@ -80,15 +80,58 @@
   - Export error utilities for use in components
   - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
 
+- [x] 8.1 Create configuration module
+
+  - Create src/config.ts with environment configuration
+  - Export API_BASE_URL from EXPO_PUBLIC_API_BASE_URL env variable
+  - Export TENANT_KEY from EXPO_PUBLIC_TENANT_KEY env variable
+  - Export APP_VERSION from Constants.expoConfig.version
+  - Export isAndroid and isIOS platform helpers
+  - _Requirements: 16.2, 16.4_
+
+- [x] 8.2 Implement typed API client with retry logic
+
+  - Create src/lib/api.ts with generic api function
+  - Accept path and RequestInit options as parameters
+  - Automatically include Content-Type: application/json header
+  - Construct full URL from API_BASE_URL and path
+  - Handle 429 rate limit errors with exponential backoff (800-1200ms jitter)
+  - Limit retries to 1 attempt (retry=false on second call)
+  - Throw errors for non-2xx responses
+  - Return typed JSON response
+  - _Requirements: 22.1, 22.2, 22.3, 22.4, 23.1, 23.2, 23.3, 23.4, 23.5_
+
+- [x] 8.3 Implement session management functions
+
+  - Create src/lib/sessions.ts with loginSession and verifySession functions
+  - Define LoginVerdict and RecommendedAction types
+  - Implement loginSession: get location permission, get coordinates, call POST /v1/sessions/login
+  - Include tenantKey, customerRef, pin, deviceInfo (platform, version), geo (lat, lng) in request
+  - Return typed response with verdict, recommendedAction, sessionId
+  - Implement verifySession: call GET /v1/sessions/verify with sessionId query param
+  - Return typed response with ok and session data
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 18.1, 18.2_
+
+- [x] 8.4 Implement evidence collection functions
+
+  - Create src/lib/evidence.ts with presignEvidence, finalizeEvidence, sha256String, uploadToS3 functions
+  - Implement presignEvidence: call POST /v1/evidence/presign with incidentId and contentType
+  - Return presigned URL and S3 key
+  - Implement finalizeEvidence: call POST /evidence/finalize with incidentId, kind, key, size, sha256, encIv
+  - Return confirmation with evidence ID
+  - Implement sha256String using Crypto.digestStringAsync with SHA-256 algorithm
+  - Implement uploadToS3: PUT file to presigned URL with Content-Type header
+  - _Requirements: 19.1, 19.2, 19.3, 19.4, 19.5, 20.1, 20.2, 20.3, 20.4_
+
 - [x] 9. Implement auth state management with Zustand
 
   - Create state/useAuthStore.ts with Zustand store
-  - Define AuthState interface with user, sessionMode, isAuthenticated, isLoading
-  - Implement setSession action to update state and store data
+  - Define AuthState interface with user, sessionMode, limitedMode, isAuthenticated, isLoading
+  - Implement setSession action to update state, set limitedMode=true when verdict is DURESS, and store data
   - Implement clearSession action to clear state and SecureStore
   - Implement setLoading action to update loading state
-  - Implement initializeAuth action to read session from SecureStore on app start
-  - _Requirements: 4.1, 4.2, 6.1, 8.3_
+  - Implement initializeAuth action to read session from SecureStore on app start and set limitedMode based on sessionMode
+  - _Requirements: 4.1, 4.2, 6.1, 8.3, 17.1, 17.3_
 
 - [x] 10. Create reusable Button component
 
@@ -136,13 +179,13 @@
   - Add Sign In Button with loading state
   - Add disabled placeholder links for "Forgot password?" and "Create account"
   - Integrate React Hook Form with Zod validation
-  - Implement handleSignIn function to call auth adapter
-  - Handle NORMAL and DURESS verdicts by navigating to Landing
+  - Implement handleSignIn function to call loginSession from sessions module
+  - Handle NORMAL and DURESS verdicts by calling setSession with verdict and NOT manually navigating
   - Handle FAIL verdict by displaying error message
   - Disable button during submission and when validation fails
   - Clear error on input change
   - Request location permission on first launch
-  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.3, 2.4, 2.5, 4.3, 4.4, 10.1_
+  - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.3, 2.4, 2.5, 4.1, 4.2, 4.3, 10.1_
 
 - [x] 15. Implement LandingScreen
 
@@ -150,11 +193,11 @@
   - Display Logo and customer reference in header
   - Display "You're signed in" message in card
   - Display last 4 characters of session ID in card
+  - If limitedMode is true, display subtle "Limited Mode (Monitoring)" pill indicator
   - Add Log Out button
-  - Implement handleLogout function to call clearSession and navigate to Login
-  - Ensure UI is identical for NORMAL and DURESS session modes
-  - Read user data from auth store
-  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 8.4, 8.5, 9.1, 9.2, 9.3, 9.4, 9.5_
+  - Implement handleLogout function to call clearSession
+  - Read user data and limitedMode from auth store
+  - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5, 8.4, 8.5, 17.2, 17.5_
 
 - [x] 16. Implement navigation with auth gate
 
@@ -174,6 +217,24 @@
   - Add ErrorBoundary wrapper for global error handling
   - Configure status bar for dark theme
   - _Requirements: 6.1, 6.4_
+
+- [x] 17.1 Implement optional session verification on app resume
+
+  - Add AppState listener in App.tsx or AppNavigator
+  - When app transitions from background to active, check if user is authenticated
+  - If authenticated, call verifySession with current sessionId
+  - If verification fails (ok: false), call clearSession and navigate to Login
+  - If network error occurs, continue with current session (graceful degradation)
+  - Handle errors gracefully without disrupting user experience
+  - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5_
+
+- [x] 17.2 Update .env.example with new environment variables
+
+  - Update .env.example to include EXPO_PUBLIC_API_BASE_URL=https://api.example.com
+  - Include EXPO_PUBLIC_TENANT_KEY=DEMO_TENANT
+  - Remove USE_MOCK_AUTH and APP_ENV variables (no longer needed)
+  - Add comments explaining each variable
+  - _Requirements: 16.2, 16.4_
 
 - [x] 18. Write unit tests for validation schemas
 
@@ -237,22 +298,36 @@
 
   - Test app in Expo Go on iOS device
   - Test app in Expo Go on Android device
-  - Verify login flow with mock adapter
+  - Verify login flow hits backend and follows verdict rules
+  - Verify DURESS verdict sets limitedMode=true and displays pill indicator
   - Verify logout flow
   - Verify app restart with active session
   - Verify app restart without session
+  - Verify optional session verification on app resume
   - Test location permission flow
+  - Test rate limit backoff (429 errors)
   - Test error handling scenarios
   - Verify accessibility with screen reader
   - Check color contrast ratios
-  - Verify no visual difference between NORMAL and DURESS modes
-  - _Requirements: 9.1, 9.2, 9.3, 12.3, 12.4, 15.3, 15.4_
+  - _Requirements: 17.2, 17.5, 18.4, 22.1, 22.2, 22.5, 12.3, 12.4, 15.3, 15.4_
 
-- [ ] 25. Create README documentation
+- [x] 25. Add evidence collection helpers (optional for future use)
+
+  - Create helper functions for requesting camera and microphone permissions
+  - Create helper function to capture photo using expo-camera
+  - Create helper function to record audio using expo-av
+  - Create helper function to compute SHA-256 hash of file
+  - Create complete evidence upload flow: presign → upload to S3 → finalize
+  - Add retry logic with exponential backoff for finalize (up to 2 retries)
+  - Export evidence collection utilities for use in screens
+  - _Requirements: 19.1, 19.2, 19.3, 19.4, 19.5, 20.1, 20.2, 20.3, 20.4, 20.5, 21.1, 21.2, 21.5_
+
+- [ ] 26. Create README documentation
   - Document project setup instructions
   - Document how to run the app with Expo Go
-  - Document environment variable configuration
+  - Document environment variable configuration (API_BASE_URL, TENANT_KEY)
   - Document how to run tests
-  - Document how to switch between mock and production auth
+  - Document API endpoint contract (login, verify, presign, finalize)
+  - Document evidence upload flow
   - Include screenshots of Login and Landing screens
   - _Requirements: 15.1, 15.3, 15.4_

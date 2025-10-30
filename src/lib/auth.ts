@@ -287,6 +287,12 @@ export class TransrifyAuthAdapter implements AuthAdapter {
 const USE_MOCK_AUTH = process.env.EXPO_PUBLIC_USE_MOCK_AUTH === 'true';
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://api.transrify.com';
 
+console.log('🔧 [auth] Initializing auth adapter...');
+console.log('🔧 [auth] USE_MOCK_AUTH:', USE_MOCK_AUTH);
+console.log('🔧 [auth] API_BASE_URL:', API_BASE_URL);
+
 export const authAdapter: AuthAdapter = USE_MOCK_AUTH
   ? new MockAuthAdapter()
   : new TransrifyAuthAdapter(API_BASE_URL);
+
+console.log('✅ [auth] Auth adapter initialized:', USE_MOCK_AUTH ? 'MockAuthAdapter' : 'TransrifyAuthAdapter');

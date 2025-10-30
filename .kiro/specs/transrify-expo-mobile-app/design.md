@@ -73,7 +73,10 @@ graph TB
     storage.ts                 # SecureStore helpers
     validation.ts              # Zod schemas
     theme.ts                   # Colors, spacing, typography
-    api.ts                     # API client configuration
+    api.ts                     # Typed API client with retry logic
+    sessions.ts                # Session login and verify functions
+    evidence.ts                # Evidence presign, upload, and finalize
+  /config.ts                   # Environment configuration
   /state
     useAuthStore.ts            # Zustand auth state
   /types
@@ -166,21 +169,24 @@ pin: z.string()
 **UI Elements:**
 - Header: Transrify logo, customer reference
 - Card: "You're signed in" message, session ID tail (last 4 chars)
+- Limited Mode Pill: Subtle indicator when limitedMode is true (e.g., "Limited Mode (Monitoring)")
 - Log Out button (secondary CTA)
 
 **States:**
 - Normal: Full access mode (NORMAL verdict)
-- Limited: Limited access mode (DURESS verdict) - visually identical to Normal
+- Limited: Limited access mode (DURESS verdict) - shows subtle monitoring indicator
 
 **Behavior:**
 - Display customer reference from auth state
 - Display last 4 characters of session ID
+- If limitedMode is true, display subtle "Limited Mode" pill indicator
 - On logout: clear SecureStore, reset state, navigate to Login
-- **Critical**: No visual difference between NORMAL and DURESS modes
+- **Note**: Limited mode shows a subtle indicator but maintains normal functionality
 
 **Future Extensibility:**
 - Limited mode can restrict features (e.g., transaction limits, disabled actions)
-- Current implementation shows identical UI for both modes
+- Evidence collection can be triggered in limited mode
+- Background monitoring can track user activity
 
 ### Reusable Components
 
@@ -290,11 +296,13 @@ interface User {
 interface AuthState {
   user: User | null;
   sessionMode: 'NORMAL' | 'DURESS' | null;
+  limitedMode: boolean;
   isAuthenticated: boolean;
   isLoading: boolean;
   setSession: (user: User, mode: 'NORMAL' | 'DURESS') => void;
   clearSession: () => void;
   setLoading: (loading: boolean) => void;
+  initializeAuth: () => Promise<void>;
 }
 ```
 
@@ -433,16 +441,18 @@ interface AuthState {
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   sessionMode: null,
+  limitedMode: false,
   isAuthenticated: false,
   isLoading: true,
   
   setSession: (user, mode) => {
-    set({ user, sessionMode: mode, isAuthenticated: true });
+    const limitedMode = mode === 'DURESS';
+    set({ user, sessionMode: mode, limitedMode, isAuthenticated: true });
   },
   
   clearSession: async () => {
     await storage.clearAll();
-    set({ user: null, sessionMode: null, isAuthenticated: false });
+    set({ user: null, sessionMode: null, limitedMode: false, isAuthenticated: false });
   },
   
   setLoading: (loading) => {
@@ -457,9 +467,11 @@ export const useAuthStore = create<AuthState>((set) => ({
       const mode = await storage.getSessionMode();
       
       if (sessionId && customerRef && mode) {
+        const limitedMode = mode === 'DURESS';
         set({
           user: { customerRef, sessionId },
           sessionMode: mode as 'NORMAL' | 'DURESS',
+          limitedMode,
           isAuthenticated: true,
         });
       }
@@ -479,6 +491,125 @@ export const useAuthStore = create<AuthState>((set) => ({
 
 
 ## API Integration
+
+### Mobile API Endpoints
+
+The app integrates with the following Transrify API endpoints:
+
+#### POST /v1/sessions/login
+**Purpose**: Authenticate user and determine access mode
+
+**Request:**
+```typescript
+{
+  tenantKey: string;
+  customerRef: string;
+  pin: string;
+  deviceInfo: {
+    platform: 'ios' | 'android';
+    version: string;
+    ip?: string;
+  };
+  geo?: {
+    lat: number;
+    lng: number;
+  };
+}
+```
+
+**Response:**
+```typescript
+{
+  verdict: 'NORMAL' | 'DURESS' | 'FAIL';
+  recommendedAction: 'ALLOW' | 'LIMIT_AND_MONITOR' | 'DENY';
+  sessionId: string;
+}
+```
+
+**Mobile Behavior:**
+- `NORMAL` → Proceed to Landing in normal mode
+- `DURESS` → Proceed to Landing in Limited Mode (appears normal), set limitedMode=true, start background monitoring
+- `FAIL` → Show error message on Login screen
+
+#### GET /v1/sessions/verify
+**Purpose**: Verify session validity (optional, used on app resume)
+
+**Request:** `?sessionId={uuid}`
+
+**Response:**
+```typescript
+{
+  ok: boolean;
+  session: {
+    id: string;
+    result: string;
+    createdAt: string;
+    customerRef: string;
+    tenantName: string;
+  };
+}
+```
+
+**Mobile Behavior:**
+- Call on app resume or when NavigationContainer state changes
+- If session is invalid, clear auth state and navigate to Login
+- If network error, continue with current session
+
+#### POST /v1/evidence/presign
+**Purpose**: Get presigned URL for evidence upload
+
+**Request:**
+```typescript
+{
+  incidentId: string;
+  contentType: string;
+}
+```
+
+**Response:**
+```typescript
+{
+  url: string;  // Presigned PUT URL (5 min expiry)
+  key: string;  // S3 object key
+}
+```
+
+**Mobile Behavior:**
+- Call before uploading media evidence
+- Use returned URL for direct S3 upload
+- URL expires in 5 minutes
+
+#### POST /evidence/finalize
+**Purpose**: Finalize evidence upload after S3 PUT
+
+**Request:**
+```typescript
+{
+  incidentId: string;
+  kind: 'VIDEO' | 'AUDIO' | 'PHOTO' | 'NEARBY' | 'TEXT';
+  key: string;
+  size: number;
+  sha256: string;
+  encIv?: string;
+}
+```
+
+**Response:**
+```typescript
+{
+  ok: true;
+  id: string;
+}
+```
+
+**Mobile Behavior:**
+- Call after successful S3 upload
+- Compute SHA-256 hash client-side using expo-crypto
+- Retry up to 2 times on failure with exponential backoff
+
+**Rate Limits:**
+- 30 requests/minute per IP
+- Handle 429 responses with exponential backoff (800-1200ms jitter)
 
 ### Auth Adapter Implementations
 
@@ -637,7 +768,8 @@ export const authAdapter: AuthAdapter =
 
 ```typescript
 // .env.example
-EXPO_PUBLIC_API_BASE_URL=https://api.transrify.com
+EXPO_PUBLIC_API_BASE_URL=https://api.example.com
+EXPO_PUBLIC_TENANT_KEY=DEMO_TENANT
 EXPO_PUBLIC_USE_MOCK_AUTH=false
 EXPO_PUBLIC_APP_ENV=production
 
@@ -649,8 +781,153 @@ EXPO_PUBLIC_APP_ENV=production
 **Configuration Strategy:**
 - Use `expo-constants` to read environment variables
 - Prefix with `EXPO_PUBLIC_` for client-side access
-- Store tenant key in SecureStore (set during onboarding)
+- Store tenant key in environment variables (not SecureStore)
 - Never commit actual credentials to source control
+
+**Config Module (src/config.ts):**
+```typescript
+import Constants from 'expo-constants';
+import { Platform } from 'react-native';
+
+export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'https://api.example.com';
+export const TENANT_KEY = process.env.EXPO_PUBLIC_TENANT_KEY ?? 'DEMO_TENANT';
+export const APP_VERSION = Constants.expoConfig?.version ?? '1.0.0';
+
+export const isAndroid = Platform.OS === 'android';
+export const isIOS = Platform.OS === 'ios';
+```
+
+### API Client Implementation
+
+**Typed API Client (src/lib/api.ts):**
+```typescript
+import { API_BASE_URL } from '../config';
+
+export async function api<T>(
+  path: string,
+  init?: RequestInit & { retry?: boolean }
+): Promise<T> {
+  const url = `${API_BASE_URL}${path}`;
+  
+  const resp = await fetch(url, {
+    headers: { 'Content-Type': 'application/json' },
+    ...init,
+  });
+  
+  // Handle rate limiting with exponential backoff
+  if (resp.status === 429 && init?.retry !== false) {
+    const jitter = Math.random() * 400; // 0-400ms jitter
+    await new Promise(r => setTimeout(r, 800 + jitter));
+    return api<T>(path, { ...init, retry: false });
+  }
+  
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}`);
+  }
+  
+  return resp.json() as Promise<T>;
+}
+```
+
+### Session Management Implementation
+
+**Session Functions (src/lib/sessions.ts):**
+```typescript
+import * as Location from 'expo-location';
+import { Platform } from 'react-native';
+import { API_BASE_URL, TENANT_KEY, APP_VERSION } from '../config';
+import { api } from './api';
+
+export type LoginVerdict = 'NORMAL' | 'DURESS' | 'FAIL';
+export type RecommendedAction = 'ALLOW' | 'LIMIT_AND_MONITOR' | 'DENY';
+
+export async function loginSession(customerRef: string, pin: string) {
+  // Request location permission
+  const { status } = await Location.getForegroundPermissionsAsync();
+  let coords = { latitude: 0, longitude: 0 };
+  
+  if (status === 'granted') {
+    const loc = await Location.getCurrentPositionAsync({});
+    coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+  }
+  
+  return api<{
+    verdict: LoginVerdict;
+    recommendedAction: RecommendedAction;
+    sessionId: string;
+  }>('/v1/sessions/login', {
+    method: 'POST',
+    body: JSON.stringify({
+      tenantKey: TENANT_KEY,
+      customerRef,
+      pin,
+      deviceInfo: {
+        platform: Platform.OS,
+        version: APP_VERSION,
+      },
+      geo: { lat: coords.latitude, lng: coords.longitude },
+    }),
+  });
+}
+
+export async function verifySession(sessionId: string) {
+  return api<{
+    ok: boolean;
+    session: any;
+  }>(`/v1/sessions/verify?sessionId=${encodeURIComponent(sessionId)}`);
+}
+```
+
+### Evidence Collection Implementation
+
+**Evidence Functions (src/lib/evidence.ts):**
+```typescript
+import * as Crypto from 'expo-crypto';
+import { api } from './api';
+
+export async function presignEvidence(incidentId: string, contentType: string) {
+  return api<{ url: string; key: string }>(
+    '/v1/evidence/presign',
+    {
+      method: 'POST',
+      body: JSON.stringify({ incidentId, contentType }),
+    }
+  );
+}
+
+export async function finalizeEvidence(input: {
+  incidentId: string;
+  kind: 'VIDEO' | 'AUDIO' | 'PHOTO' | 'NEARBY' | 'TEXT';
+  key: string;
+  size: number;
+  sha256: string;
+  encIv?: string;
+}) {
+  return api<{ ok: true; id: string }>(
+    '/evidence/finalize',
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }
+  );
+}
+
+export async function sha256String(s: string) {
+  return Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, s);
+}
+
+export async function uploadToS3(presignedUrl: string, file: Blob, contentType: string) {
+  const resp = await fetch(presignedUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType },
+    body: file,
+  });
+  
+  if (!resp.ok) {
+    throw new Error(`S3 upload failed: ${resp.status}`);
+  }
+}
+```
 
 
 ## Error Handling
@@ -1415,7 +1692,9 @@ export const config = ENV[process.env.EXPO_PUBLIC_APP_ENV || 'development'];
       "supportsTablet": true,
       "bundleIdentifier": "com.transrify.mobile",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "We use your location to enhance security and provide emergency assistance if needed."
+        "NSLocationWhenInUseUsageDescription": "We use your location to enhance security and provide emergency assistance if needed.",
+        "NSCameraUsageDescription": "We need camera access to capture evidence for your safety.",
+        "NSMicrophoneUsageDescription": "We need microphone access to record audio evidence for your safety."
       }
     },
     "android": {
@@ -1426,12 +1705,16 @@ export const config = ENV[process.env.EXPO_PUBLIC_APP_ENV || 'development'];
       "package": "com.transrify.mobile",
       "permissions": [
         "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION"
+        "ACCESS_COARSE_LOCATION",
+        "CAMERA",
+        "RECORD_AUDIO"
       ]
     },
     "plugins": [
       "expo-secure-store",
-      "expo-location"
+      "expo-location",
+      "expo-camera",
+      "expo-av"
     ]
   }
 }

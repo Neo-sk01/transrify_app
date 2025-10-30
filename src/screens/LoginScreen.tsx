@@ -55,6 +55,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     resolver: zodResolver(loginFormSchema),
     mode: 'onChange', // Validate on change for real-time feedback
     defaultValues: {
+      tenantKey: '',
       customerRef: '',
       pin: '',
     },
@@ -86,14 +87,31 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
    */
   const onSubmit = async (data: LoginFormData) => {
     try {
+      console.log('🔐 [LoginScreen] Starting login attempt...');
+      console.log('📝 [LoginScreen] Tenant Key:', data.tenantKey);
+      console.log('📝 [LoginScreen] Customer Ref:', data.customerRef);
+      console.log('📝 [LoginScreen] PIN length:', data.pin.length);
+
       setIsSubmitting(true);
       setError(null);
 
+      // Store tenant key in secure storage for auth adapter
+      const storage = await import('../lib/storage');
+      await storage.setTenantKey(data.tenantKey);
+      console.log('💾 [LoginScreen] Tenant key stored in SecureStore');
+
       // Call auth adapter to authenticate
+      console.log('🌐 [LoginScreen] Calling authAdapter.signIn...');
       const response = await authAdapter.signIn(data.customerRef, data.pin);
+
+      console.log('✅ [LoginScreen] Received response:', JSON.stringify(response, null, 2));
+      console.log('📊 [LoginScreen] Verdict:', response.verdict);
+      console.log('📊 [LoginScreen] Recommended Action:', response.recommendedAction);
+      console.log('📊 [LoginScreen] Session ID:', response.sessionId);
 
       // Handle FAIL verdict
       if (response.verdict === 'FAIL') {
+        console.log('❌ [LoginScreen] Login failed - invalid credentials');
         setError('Invalid credentials. Please try again.');
         return;
       }
@@ -101,7 +119,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
       // Handle NORMAL and DURESS verdicts
       // Both navigate to Landing screen (identical UI per requirement 9.1)
       if (response.verdict === 'NORMAL' || response.verdict === 'DURESS') {
+        console.log('✅ [LoginScreen] Login successful - setting session');
+        console.log('🔄 [LoginScreen] Calling setSession with verdict:', response.verdict);
+
         // Update auth store with session data
+        // This will trigger RootNavigator to automatically switch to MainAppNavigator
         setSession(
           {
             customerRef: data.customerRef,
@@ -110,15 +132,21 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
           response.verdict
         );
 
-        // Navigate to Landing screen
-        navigation.navigate('Landing');
+        console.log('✅ [LoginScreen] Session set - navigation should happen automatically');
+        // Navigation happens automatically via auth gate in RootNavigator
+        // Do not call navigation.navigate() manually
       }
     } catch (err) {
+      console.error('❌ [LoginScreen] Login error:', err);
+      console.error('❌ [LoginScreen] Error details:', JSON.stringify(err, null, 2));
+
       // Map error to user-friendly message
       const errorMessage = getErrorMessage(err);
+      console.log('📝 [LoginScreen] User-friendly error message:', errorMessage);
       setError(errorMessage);
     } finally {
       setIsSubmitting(false);
+      console.log('🏁 [LoginScreen] Login attempt completed');
     }
   };
 
@@ -152,6 +180,28 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
 
         {/* Form */}
         <View style={styles.form}>
+          {/* Tenant Key Input */}
+          <Controller
+            control={control}
+            name="tenantKey"
+            render={({ field: { onChange, onBlur, value } }) => (
+              <TextInput
+                label="Tenant Key"
+                value={value}
+                onChangeText={(text) => {
+                  onChange(text);
+                  handleInputChange();
+                }}
+                onBlur={onBlur}
+                placeholder="Enter your tenant key"
+                error={errors.tenantKey?.message}
+                accessibilityLabel="Tenant key input"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+            )}
+          />
+
           {/* Customer Reference Input */}
           <Controller
             control={control}
