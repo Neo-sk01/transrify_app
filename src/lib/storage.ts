@@ -131,6 +131,36 @@ export async function deleteTenantKey(): Promise<void> {
 }
 
 /**
+ * Generic storage functions for any key-value pair
+ */
+export async function setItem(key: string, value: string): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(key, value);
+  } catch (error) {
+    console.error(`Failed to store item with key ${key}:`, error);
+    throw new Error('STORAGE_ERROR');
+  }
+}
+
+export async function getItem(key: string): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(key);
+  } catch (error) {
+    console.error(`Failed to retrieve item with key ${key}:`, error);
+    return null;
+  }
+}
+
+export async function deleteItem(key: string): Promise<void> {
+  try {
+    await SecureStore.deleteItemAsync(key);
+  } catch (error) {
+    console.error(`Failed to delete item with key ${key}:`, error);
+    throw new Error('STORAGE_ERROR');
+  }
+}
+
+/**
  * Clear all stored data
  */
 export async function clearAll(): Promise<void> {

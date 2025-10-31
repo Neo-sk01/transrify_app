@@ -1762,11 +1762,775 @@ export const config = ENV[process.env.EXPO_PUBLIC_APP_ENV || 'development'];
 3. **Micro-Frontends**: Modularize app into independent features
 4. **Backend Integration**: Support multiple auth providers (Supabase, Cognito, etc.)
 
+## Duress Proximity Alerts
+
+### Overview
+
+The Duress Proximity Alerts feature enables real-time notification of nearby users when someone authenticates with a duress PIN. This provides immediate awareness to colleagues within a configurable radius while maintaining plausible deniability on the duressed device.
+
+### Architecture
+
+```mermaid
+sequenceDiagram
+    participant Duressed as Duressed Device
+    participant API as Transrify API
+    participant Nearby as Nearby Device
+    participant WS as WebSocket/Polling
+    
+    Duressed->>API: POST /v1/alerts/duress
+    API-->>Duressed: {alertId}
+    API->>WS: Broadcast alert to tenant
+    WS->>Nearby: Alert notification
+    Nearby->>Nearby: Display AlertBanner
+    Nearby->>Nearby: Haptic + Sound
+    Nearby->>API: POST /v1/alerts/ack
+    API-->>Nearby: {ok: true}
+```
+
+### API Endpoints
+
+#### POST /v1/alerts/duress
+
+**Purpose**: Send duress alert to notify nearby users
+
+**Request:**
+```typescript
+{
+  sessionId: string;
+  tenantKey: string;
+  geo: {
+    lat: number;
+    lng: number;
+  };
+  accuracy: number;
+  alertKind: 'DURESS';
+  device: {
+    platform: 'ios' | 'android';
+    appVersion: string;
+  };
+}
+```
+
+**Response:**
+```typescript
+{
+  ok: true;
+  alertId: string;
+}
+```
+
+#### GET /v1/alerts/nearby
+
+**Purpose**: Poll for nearby duress alerts (fallback when WebSocket unavailable)
+
+**Query Parameters:**
+- `tenantKey`: Organization identifier
+- `lat`: Current latitude
+- `lng`: Current longitude
+- `radius`: Search radius in meters (default: 1000)
+- `since`: ISO timestamp for incremental updates
+
+**Response:**
+```typescript
+{
+  ok: true;
+  alerts: Array<{
+    id: string;
+    kind: 'DURESS';
+    sessionId: string;
+    customerRef: string;
+    geo: {
+      lat: number;
+      lng: number;
+    };
+    createdAt: string; // ISO timestamp
+  }>;
+}
+```
+
+#### POST /v1/alerts/ack
+
+**Purpose**: Acknowledge receipt and response to an alert
+
+**Request:**
+```typescript
+{
+  alertId: string;
+  ackBy: string; // Customer reference of acknowledging user
+  method: 'NFC' | 'PUSH' | 'INAPP';
+}
+```
+
+**Response:**
+```typescript
+{
+  ok: true;
+}
+```
+
+#### WebSocket: wss://.../alerts/subscribe
+
+**Purpose**: Real-time alert delivery (preferred over polling)
+
+**Connection:** `wss://api.example.com/alerts/subscribe?tenantKey=TENANT`
+
+**Message Format:**
+```typescript
+{
+  type: 'DURESS_ALERT';
+  alert: {
+    id: string;
+    kind: 'DURESS';
+    sessionId: string;
+    customerRef: string;
+    geo: { lat: number; lng: number };
+    createdAt: string;
+  };
+}
+```
+
+### Client Implementation
+
+#### Alert State Management
+
+```typescript
+// state/useAlertsStore.ts
+interface Alert {
+  id: string;
+  kind: 'DURESS';
+  sessionId: string;
+  customerRef: string;
+  geo: { lat: number; lng: number };
+  createdAt: string;
+  distance?: number; // Computed client-side
+}
+
+interface AlertsState {
+  alerts: Alert[];
+  lastCheckedAt: string | null;
+  subscribed: boolean;
+  wsConnection: WebSocket | null;
+  
+  addAlert: (alert: Alert) => void;
+  removeAlert: (alertId: string) => void;
+  startForegroundAlerts: (tenantKey: string, userGeo: { lat: number; lng: number }) => void;
+  stopForegroundAlerts: () => void;
+  connectWebSocket: (tenantKey: string) => void;
+  disconnectWebSocket: () => void;
+}
+```
+
+**Implementation Strategy:**
+1. On app foreground + authenticated → `startForegroundAlerts()`
+2. Try WebSocket connection first
+3. If WebSocket fails → fall back to polling every 15s
+4. On app background or logout → `stopForegroundAlerts()`
+5. Compute distance client-side using Haversine formula
+
+#### Alert Library
+
+```typescript
+// lib/alerts.ts
+import { API_BASE_URL, TENANT_KEY } from '../config';
+import { api } from './api';
+
+export async function sendDuressAlert(
+  sessionId: string,
+  tenantKey: string,
+  geo: { lat: number; lng: number },
+  device: { platform: string; appVersion: string }
+) {
+  return api<{ ok: true; alertId: string }>('/v1/alerts/duress', {
+    method: 'POST',
+    body: JSON.stringify({
+      sessionId,
+      tenantKey,
+      geo,
+      accuracy: 30, // meters
+      alertKind: 'DURESS',
+      device,
+    }),
+  });
+}
+
+export async function pollNearbyAlerts(
+  tenantKey: string,
+  geo: { lat: number; lng: number },
+  radius: number = 1000,
+  since?: string
+) {
+  const params = new URLSearchParams({
+    tenantKey,
+    lat: geo.lat.toString(),
+    lng: geo.lng.toString(),
+    radius: radius.toString(),
+    ...(since && { since }),
+  });
+  
+  return api<{
+    ok: true;
+    alerts: Array<{
+      id: string;
+      kind: 'DURESS';
+      sessionId: string;
+      customerRef: string;
+      geo: { lat: number; lng: number };
+      createdAt: string;
+    }>;
+  }>(`/v1/alerts/nearby?${params}`);
+}
+
+export async function ackAlert(
+  alertId: string,
+  ackBy: string,
+  method: 'NFC' | 'PUSH' | 'INAPP'
+) {
+  return api<{ ok: true }>('/v1/alerts/ack', {
+    method: 'POST',
+    body: JSON.stringify({ alertId, ackBy, method }),
+  });
+}
+
+export function connectAlertsSocket(
+  tenantKey: string,
+  onMessage: (alert: any) => void
+): WebSocket | null {
+  try {
+    const wsUrl = process.env.EXPO_PUBLIC_WS_URL;
+    if (!wsUrl) return null;
+    
+    const ws = new WebSocket(`${wsUrl}/alerts/subscribe?tenantKey=${tenantKey}`);
+    
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'DURESS_ALERT') {
+        onMessage(data.alert);
+      }
+    };
+    
+    ws.onerror = (error) => {
+      console.warn('WebSocket error:', error);
+    };
+    
+    return ws;
+  } catch (error) {
+    console.warn('Failed to connect WebSocket:', error);
+    return null;
+  }
+}
+```
+
+#### Geolocation Helpers
+
+```typescript
+// lib/geo.ts
+import * as Location from 'expo-location';
+
+export async function getCurrentLocation(): Promise<{ lat: number; lng: number } | null> {
+  try {
+    const { status } = await Location.getForegroundPermissionsAsync();
+    if (status !== 'granted') return null;
+    
+    const location = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.Balanced,
+    });
+    
+    return {
+      lat: location.coords.latitude,
+      lng: location.coords.longitude,
+    };
+  } catch (error) {
+    console.warn('Failed to get location:', error);
+    return null;
+  }
+}
+
+// Haversine formula for distance calculation
+export function calculateDistance(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const R = 6371e3; // Earth radius in meters
+  const φ1 = (lat1 * Math.PI) / 180;
+  const φ2 = (lat2 * Math.PI) / 180;
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+  const Δλ = ((lng2 - lng1) * Math.PI) / 180;
+  
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  
+  return R * c; // Distance in meters
+}
+
+export function formatDistance(meters: number): string {
+  if (meters < 1000) {
+    return `${Math.round(meters)}m`;
+  }
+  return `${(meters / 1000).toFixed(1)}km`;
+}
+```
+
+#### Push Notifications
+
+```typescript
+// lib/push.ts
+import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
+
+export async function registerForPushNotifications(): Promise<string | null> {
+  try {
+    const { status: existingStatus } = await Notifications.getPermissionsAsync();
+    let finalStatus = existingStatus;
+    
+    if (existingStatus !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync();
+      finalStatus = status;
+    }
+    
+    if (finalStatus !== 'granted') {
+      return null;
+    }
+    
+    const token = (await Notifications.getExpoPushTokenAsync()).data;
+    
+    if (Platform.OS === 'android') {
+      Notifications.setNotificationChannelAsync('duress-alerts', {
+        name: 'Duress Alerts',
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FF5252',
+      });
+    }
+    
+    return token;
+  } catch (error) {
+    console.warn('Failed to register for push notifications:', error);
+    return null;
+  }
+}
+
+export async function getPushTokenAsync(): Promise<string | null> {
+  try {
+    const token = (await Notifications.getExpoPushTokenAsync()).data;
+    return token;
+  } catch (error) {
+    return null;
+  }
+}
+```
+
+#### NFC Integration (Feature-Flagged)
+
+```typescript
+// lib/nfc.ts
+const NFC_ENABLED = process.env.EXPO_PUBLIC_NFC_ENABLED === 'true';
+
+export const isNfcAvailable = NFC_ENABLED;
+
+export async function startNfcReader(
+  onRead: (payload: string) => void
+): Promise<void> {
+  if (!NFC_ENABLED) {
+    throw new Error('NFC is disabled in Expo Go. Use a Development Build to enable NFC.');
+  }
+  
+  // In Development Build, this would use react-native-nfc-manager
+  // For now, this is a stub that throws an error
+  throw new Error('NFC implementation requires Development Build with react-native-nfc-manager');
+}
+
+export async function stopNfcReader(): Promise<void> {
+  if (!NFC_ENABLED) return;
+  
+  // Stub for Development Build implementation
+}
+
+export async function writeNfcTag(payload: string): Promise<void> {
+  if (!NFC_ENABLED) {
+    throw new Error('NFC is disabled in Expo Go');
+  }
+  
+  // Stub for Development Build implementation
+}
+```
+
+### UI Components
+
+#### AlertBanner Component
+
+```typescript
+// components/AlertBanner.tsx
+import React, { useEffect } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import { colors, spacing, borderRadius } from '../lib/theme';
+import { isNfcAvailable } from '../lib/nfc';
+
+interface AlertBannerProps {
+  alert: {
+    id: string;
+    customerRef: string;
+    distance?: number;
+  };
+  onAck: () => void;
+  onMap: () => void;
+  onCall: () => void;
+  onNfc?: () => void;
+}
+
+export function AlertBanner({ alert, onAck, onMap, onCall, onNfc }: AlertBannerProps) {
+  useEffect(() => {
+    // Trigger haptic feedback on mount
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  }, []);
+  
+  return (
+    <View style={styles.container} accessibilityRole="alert">
+      <View style={styles.header}>
+        <Text style={styles.title} accessibilityLabel="Nearby duress alert">
+          ⚠️ Nearby Duress Alert
+        </Text>
+      </View>
+      
+      <Text style={styles.info}>
+        User: {alert.customerRef}
+      </Text>
+      
+      {alert.distance && (
+        <Text style={styles.info}>
+          Distance: {alert.distance}
+        </Text>
+      )}
+      
+      <View style={styles.actions}>
+        <TouchableOpacity
+          style={[styles.button, styles.primaryButton]}
+          onPress={onAck}
+          accessibilityLabel="Acknowledge alert"
+          accessibilityRole="button"
+        >
+          <Text style={styles.buttonText}>Acknowledge</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={[styles.button, styles.secondaryButton]}
+          onPress={onMap}
+          accessibilityLabel="View map"
+          accessibilityRole="button"
+        >
+          <Text style={styles.secondaryButtonText}>View Map</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity
+          style={[styles.button, styles.secondaryButton]}
+          onPress={onCall}
+          accessibilityLabel="Call emergency"
+          accessibilityRole="button"
+        >
+          <Text style={styles.secondaryButtonText}>Call</Text>
+        </TouchableOpacity>
+        
+        {isNfcAvailable && onNfc && (
+          <TouchableOpacity
+            style={[styles.button, styles.nfcButton]}
+            onPress={onNfc}
+            accessibilityLabel="Tap to confirm via NFC"
+            accessibilityRole="button"
+          >
+            <Text style={styles.buttonText}>📱 NFC Confirm</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    backgroundColor: '#FF5252',
+    borderRadius: borderRadius.lg,
+    padding: spacing.lg,
+    margin: spacing.lg,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  header: {
+    marginBottom: spacing.md,
+  },
+  title: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  info: {
+    fontSize: 14,
+    color: '#FFFFFF',
+    marginBottom: spacing.sm,
+  },
+  actions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  button: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.md,
+    minWidth: 100,
+    alignItems: 'center',
+  },
+  primaryButton: {
+    backgroundColor: '#FFFFFF',
+  },
+  secondaryButton: {
+    backgroundColor: 'transparent',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
+  },
+  nfcButton: {
+    backgroundColor: colors.primary,
+  },
+  buttonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  secondaryButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+});
+```
+
+### Integration with Existing Screens
+
+#### LoginScreen Updates
+
+After successful duress authentication, send the duress alert:
+
+```typescript
+// screens/LoginScreen.tsx
+import { sendDuressAlert } from '../lib/alerts';
+import { getCurrentLocation } from '../lib/geo';
+import { Platform } from 'react-native';
+import { APP_VERSION, TENANT_KEY } from '../config';
+
+const handleSignIn = async () => {
+  try {
+    setIsSubmitting(true);
+    setError(null);
+    
+    const response = await loginSession(customerRef, pin);
+    
+    if (response.verdict === 'FAIL') {
+      setError('Invalid credentials. Please try again.');
+      return;
+    }
+    
+    // Update state
+    useAuthStore.getState().setSession(
+      { customerRef, sessionId: response.sessionId },
+      response.verdict
+    );
+    
+    // If DURESS, send alert
+    if (response.verdict === 'DURESS') {
+      const geo = await getCurrentLocation();
+      if (geo) {
+        try {
+          await sendDuressAlert(
+            response.sessionId,
+            TENANT_KEY,
+            geo,
+            {
+              platform: Platform.OS,
+              appVersion: APP_VERSION,
+            }
+          );
+        } catch (error) {
+          // Silent failure - don't reveal duress state
+          console.warn('Failed to send duress alert:', error);
+        }
+      }
+    }
+    
+    // Navigation handled by auth state change
+    
+  } catch (error) {
+    setError(getErrorMessage(error));
+  } finally {
+    setIsSubmitting(false);
+  }
+};
+```
+
+#### LandingScreen Updates
+
+Subscribe to alerts and display AlertBanner:
+
+```typescript
+// screens/LandingScreen.tsx
+import React, { useEffect, useState } from 'react';
+import { useAlertsStore } from '../state/useAlertsStore';
+import { AlertBanner } from '../components/AlertBanner';
+import { ackAlert } from '../lib/alerts';
+import { getCurrentLocation, formatDistance, calculateDistance } from '../lib/geo';
+import { TENANT_KEY } from '../config';
+
+export function LandingScreen() {
+  const { user, limitedMode } = useAuthStore();
+  const { alerts, startForegroundAlerts, stopForegroundAlerts } = useAlertsStore();
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  
+  useEffect(() => {
+    // Get user location
+    getCurrentLocation().then(setUserLocation);
+    
+    // Subscribe to alerts
+    if (userLocation) {
+      startForegroundAlerts(TENANT_KEY, userLocation);
+    }
+    
+    return () => {
+      stopForegroundAlerts();
+    };
+  }, [userLocation]);
+  
+  const handleAck = async (alertId: string) => {
+    try {
+      await ackAlert(alertId, user?.customerRef || '', 'INAPP');
+      useAlertsStore.getState().removeAlert(alertId);
+    } catch (error) {
+      console.error('Failed to acknowledge alert:', error);
+    }
+  };
+  
+  const handleMap = () => {
+    // Mock implementation
+    console.log('View map');
+  };
+  
+  const handleCall = () => {
+    // Mock implementation
+    console.log('Call emergency');
+  };
+  
+  const handleNfc = () => {
+    // Mock implementation
+    console.log('NFC confirm');
+  };
+  
+  // Compute distance for first alert
+  const alertWithDistance = alerts[0] && userLocation
+    ? {
+        ...alerts[0],
+        distance: formatDistance(
+          calculateDistance(
+            userLocation.lat,
+            userLocation.lng,
+            alerts[0].geo.lat,
+            alerts[0].geo.lng
+          )
+        ),
+      }
+    : alerts[0];
+  
+  return (
+    <Screen>
+      {/* Existing header and content */}
+      
+      {alertWithDistance && (
+        <AlertBanner
+          alert={alertWithDistance}
+          onAck={() => handleAck(alertWithDistance.id)}
+          onMap={handleMap}
+          onCall={handleCall}
+          onNfc={handleNfc}
+        />
+      )}
+      
+      {/* Existing logout button */}
+    </Screen>
+  );
+}
+```
+
+### Configuration
+
+Add new environment variables to `.env.example`:
+
+```bash
+# Existing variables
+EXPO_PUBLIC_API_BASE_URL=https://api.example.com
+EXPO_PUBLIC_TENANT_KEY=DEMO_TENANT
+
+# Alert configuration
+EXPO_PUBLIC_NFC_ENABLED=false
+EXPO_PUBLIC_WS_URL=wss://api.example.com
+ALERT_RADIUS_METERS=1000
+ALERT_POLL_INTERVAL_MS=15000
+```
+
+### Security Considerations
+
+**Duress Device:**
+- No visual indication that alert was sent
+- Alert sending happens silently in background
+- NFC reader mode (if enabled) maintains normal UI appearance
+- All errors are caught and logged silently
+
+**Nearby Devices:**
+- Alerts only shown to users in same tenant
+- Distance calculated client-side (no server-side tracking)
+- Alert banner is high-contrast but not alarming
+- Haptic/sound feedback is soft and professional
+
+**Privacy:**
+- Location only shared when permission granted
+- Alerts are tenant-scoped (no cross-tenant leakage)
+- Customer references are anonymized if policy requires
+- NFC interactions are optional and feature-flagged
+
+### Testing Strategy
+
+**Unit Tests:**
+- Alert sending with valid/invalid data
+- Nearby alerts polling with different parameters
+- Distance calculation accuracy
+- Alert acknowledgment flow
+- WebSocket connection and fallback
+
+**Integration Tests:**
+- Duress login triggers alert sending
+- Foreground alerts subscription lifecycle
+- Alert banner display and actions
+- NFC feature flag behavior
+- Push notification handling
+
+**Manual Tests:**
+- Two devices: one duress, one nearby
+- Test in Expo Go (NFC disabled)
+- Test in Dev Build (NFC enabled)
+- Test WebSocket vs polling
+- Test background notifications
+- Test haptic and audio feedback
+
 ## Conclusion
 
 This design provides a solid foundation for the Transrify mobile app with:
 
 - ✅ Dual-PIN authentication with silent duress detection
+- ✅ Real-time proximity alerts for nearby users
+- ✅ NFC support for physical presence confirmation (feature-flagged)
 - ✅ Clean, accessible dark-themed UI
 - ✅ Secure data storage and network communication
 - ✅ Replaceable auth adapter for future flexibility

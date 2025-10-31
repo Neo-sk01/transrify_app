@@ -299,3 +299,147 @@ Transrify is an Expo-managed React Native mobile application that provides a dua
 3. THE API client SHALL construct full URLs by combining the base URL with the provided path
 4. THE API client SHALL parse JSON responses and return typed data
 5. THE API client SHALL throw errors for non-2xx HTTP status codes with the status code included
+
+### Requirement 24
+
+**User Story:** As a user in duress mode, I want to silently alert nearby users in my organization, so that help can be dispatched quickly without alerting my attacker.
+
+#### Acceptance Criteria
+
+1. WHEN the API returns verdict "DURESS", THE Transrify App SHALL send a POST request to "/v1/alerts/duress" with session ID, tenant key, geolocation, and device information
+2. THE duress alert request SHALL include alertKind set to "DURESS"
+3. THE Transrify App SHALL send the duress alert immediately after successful duress authentication
+4. WHEN the duress alert is sent successfully, THE Transrify App SHALL receive an alert ID in the response
+5. THE Transrify App SHALL NOT display any visual indication that a duress alert has been sent
+
+### Requirement 25
+
+**User Story:** As a user with the app installed, I want to receive alerts when nearby colleagues are in duress, so that I can respond or notify authorities.
+
+#### Acceptance Criteria
+
+1. WHEN THE Transrify App is in the foreground AND the user is authenticated, THE Transrify App SHALL subscribe to nearby alerts for the user's tenant
+2. THE Transrify App SHALL poll the "/v1/alerts/nearby" endpoint every 15 seconds when WebSocket is unavailable
+3. THE Transrify App SHALL include tenant key, current geolocation, radius in meters, and timestamp in the nearby alerts request
+4. WHEN a DURESS alert is received for the user's tenant, THE Transrify App SHALL display an in-app alert banner
+5. THE Transrify App SHALL stop polling for nearby alerts when the app moves to background or user logs out
+
+### Requirement 26
+
+**User Story:** As a user receiving a duress alert, I want to see relevant information about the alert, so that I can assess the situation and respond appropriately.
+
+#### Acceptance Criteria
+
+1. THE alert banner SHALL display the text "Nearby Duress Alert"
+2. THE alert banner SHALL display the customer reference of the user in duress
+3. THE alert banner SHALL display the approximate distance to the duress location when geolocation is available
+4. THE alert banner SHALL provide action buttons for "Acknowledge", "View Map", and "Call Emergency"
+5. THE alert banner SHALL use high-contrast colors and accessible labels for screen readers
+
+### Requirement 27
+
+**User Story:** As a user receiving a duress alert, I want to acknowledge the alert, so that others know I am aware and responding.
+
+#### Acceptance Criteria
+
+1. WHEN the user taps the "Acknowledge" button on an alert banner, THE Transrify App SHALL send a POST request to "/v1/alerts/ack"
+2. THE acknowledgment request SHALL include the alert ID, acknowledging user's customer reference, and method set to "PUSH" or "INAPP"
+3. WHEN the acknowledgment is successful, THE Transrify App SHALL dismiss the alert banner
+4. WHEN the acknowledgment fails, THE Transrify App SHALL display an error message and keep the banner visible
+5. THE Transrify App SHALL provide haptic feedback when the alert is acknowledged
+
+### Requirement 28
+
+**User Story:** As a user receiving a duress alert, I want to receive notifications even when the app is in the background, so that I don't miss critical alerts.
+
+#### Acceptance Criteria
+
+1. WHEN THE Transrify App is installed AND notification permissions are granted, THE Transrify App SHALL register for push notifications
+2. WHEN a duress alert is received while the app is in the background, THE Transrify App SHALL display a push notification
+3. THE push notification SHALL include the text "Nearby Duress Alert" and the customer reference
+4. WHEN the user taps the push notification, THE Transrify App SHALL open and display the alert banner
+5. THE Transrify App SHALL request notification permissions on first launch or when alerts are enabled
+
+### Requirement 29
+
+**User Story:** As a user receiving a duress alert, I want haptic and audio feedback, so that I notice the alert immediately.
+
+#### Acceptance Criteria
+
+1. WHEN a duress alert is received in the foreground, THE Transrify App SHALL trigger a haptic notification
+2. WHEN a duress alert is received in the foreground, THE Transrify App SHALL play a soft alert sound
+3. THE Transrify App SHALL debounce identical alerts for 60 seconds to prevent repeated haptic and audio feedback
+4. THE Transrify App SHALL respect the device's silent mode settings for audio feedback
+5. THE Transrify App SHALL use the "warning" haptic pattern for alert notifications
+
+### Requirement 30
+
+**User Story:** As a developer, I want NFC functionality to be feature-flagged, so that the app works in Expo Go while supporting NFC in production builds.
+
+#### Acceptance Criteria
+
+1. THE Transrify App SHALL read the EXPO_PUBLIC_NFC_ENABLED environment variable to determine NFC availability
+2. WHEN EXPO_PUBLIC_NFC_ENABLED is "false" OR undefined, THE Transrify App SHALL disable all NFC features
+3. WHEN EXPO_PUBLIC_NFC_ENABLED is "true", THE Transrify App SHALL enable NFC reader mode for alert acknowledgment
+4. THE Transrify App SHALL NOT crash or throw errors when NFC is disabled in Expo Go
+5. THE Transrify App SHALL display NFC-related UI elements only when EXPO_PUBLIC_NFC_ENABLED is "true"
+
+### Requirement 31
+
+**User Story:** As a responder with NFC enabled, I want to tap my device to acknowledge a duress alert, so that I can confirm my physical presence at the scene.
+
+#### Acceptance Criteria
+
+1. WHEN EXPO_PUBLIC_NFC_ENABLED is "true" AND an alert banner is displayed, THE Transrify App SHALL show a "Tap to Confirm via NFC" button
+2. WHEN the user taps the NFC button, THE Transrify App SHALL enter NFC reader mode
+3. WHEN an NFC tag is detected, THE Transrify App SHALL read the NDEF payload
+4. WHEN the NFC read is successful, THE Transrify App SHALL send an acknowledgment with method set to "NFC"
+5. WHEN NFC is not available on the device, THE Transrify App SHALL display an error message
+
+### Requirement 32
+
+**User Story:** As a user in duress mode with NFC enabled, I want my device to act as an NFC tag, so that responders can tap to confirm their presence.
+
+#### Acceptance Criteria
+
+1. WHEN EXPO_PUBLIC_NFC_ENABLED is "true" AND limitedMode is true, THE Transrify App SHALL enter NFC reader mode
+2. THE Transrify App SHALL expose an NDEF payload containing the alert ID in the format "trf:duress:<alertId>"
+3. WHEN a responder device taps the duressed device, THE Transrify App SHALL detect the NFC interaction
+4. THE Transrify App SHALL maintain normal UI appearance while in NFC reader mode
+5. THE Transrify App SHALL handle NFC errors gracefully without revealing duress state
+
+### Requirement 33
+
+**User Story:** As a developer, I want configurable alert parameters, so that the alert system can be tuned for different deployment scenarios.
+
+#### Acceptance Criteria
+
+1. THE Transrify App SHALL read ALERT_RADIUS_METERS from environment configuration with a default value of 1000
+2. THE Transrify App SHALL read ALERT_POLL_INTERVAL_MS from environment configuration with a default value of 15000
+3. THE Transrify App SHALL use the configured radius when querying for nearby alerts
+4. THE Transrify App SHALL use the configured poll interval for the nearby alerts polling loop
+5. THE Transrify App SHALL validate that ALERT_RADIUS_METERS is between 100 and 10000 meters
+
+### Requirement 34
+
+**User Story:** As a user, I want the app to request necessary permissions for alert functionality, so that I can receive and respond to alerts.
+
+#### Acceptance Criteria
+
+1. WHEN the user authenticates for the first time, THE Transrify App SHALL request foreground location permission
+2. WHEN the user authenticates for the first time, THE Transrify App SHALL request notification permission
+3. THE Transrify App SHALL explain that location is needed for proximity alerts before requesting permission
+4. THE Transrify App SHALL explain that notifications are needed for background alerts before requesting permission
+5. WHEN permissions are denied, THE Transrify App SHALL continue to function but disable alert features
+
+### Requirement 35
+
+**User Story:** As a developer, I want WebSocket support for real-time alerts, so that users receive alerts with minimal latency.
+
+#### Acceptance Criteria
+
+1. WHEN a WebSocket URL is configured, THE Transrify App SHALL attempt to connect to the alerts WebSocket channel
+2. THE WebSocket connection SHALL include the tenant key as a query parameter
+3. WHEN the WebSocket connection is established, THE Transrify App SHALL stop polling the nearby alerts endpoint
+4. WHEN the WebSocket connection fails or is unavailable, THE Transrify App SHALL fall back to polling
+5. WHEN the app moves to background, THE Transrify App SHALL close the WebSocket connection

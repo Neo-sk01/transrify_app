@@ -15,7 +15,8 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "We use your location to enhance security and provide emergency assistance if needed."
+        "NSLocationWhenInUseUsageDescription": "We use your location to enhance security and provide emergency assistance if needed.",
+        "NSUserNotificationsUsageDescription": "We send you alerts when nearby colleagues need assistance."
       }
     },
     "android": {
@@ -25,11 +26,24 @@
       },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
-      ]
+        "ACCESS_FINE_LOCATION",
+        "POST_NOTIFICATIONS"
+      ],
+      "package": "com.stake99.transrifyapp"
+    },
+    "notification": {
+      "icon": "./assets/icon.png",
+      "color": "#FF5252",
+      "androidMode": "default",
+      "androidCollapsedTitle": "Duress Alert"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "89e28307-eeec-4184-ba30-3356e6f78bbf"
+      }
     }
   }
 }

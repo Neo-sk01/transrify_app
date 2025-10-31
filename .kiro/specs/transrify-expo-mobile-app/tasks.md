@@ -331,3 +331,176 @@
   - Document evidence upload flow
   - Include screenshots of Login and Landing screens
   - _Requirements: 15.1, 15.3, 15.4_
+
+- [x] 27. Install dependencies for Duress Proximity Alerts
+  - Install expo-notifications for push notification support
+  - Install expo-haptics for haptic feedback on alerts
+  - Configure app.json with notification permissions for iOS and Android
+  - Add notification channel configuration for Android
+  - Verify packages are compatible with Expo Go
+  - _Requirements: 28.1, 29.1_
+
+- [x] 28. Implement geolocation helpers
+  - Create lib/geo.ts with location and distance utilities
+  - Implement getCurrentLocation function using expo-location with Balanced accuracy
+  - Implement calculateDistance function using Haversine formula
+  - Implement formatDistance function to display meters or kilometers
+  - Handle location permission errors gracefully
+  - Export geolocation utilities for use in alert system
+  - _Requirements: 24.1, 26.3, 33.3_
+
+- [x] 29. Implement alert API functions
+  - Create lib/alerts.ts with alert-related API calls
+  - Implement sendDuressAlert function: POST /v1/alerts/duress with sessionId, tenantKey, geo, device
+  - Implement pollNearbyAlerts function: GET /v1/alerts/nearby with tenantKey, geo, radius, since params
+  - Implement ackAlert function: POST /v1/alerts/ack with alertId, ackBy, method
+  - Implement connectAlertsSocket function for WebSocket connection with tenant key
+  - Handle WebSocket message parsing for DURESS_ALERT type
+  - Export alert functions for use in screens and state management
+  - _Requirements: 24.1, 24.2, 24.3, 25.2, 25.3, 27.1, 27.2, 35.1, 35.2_
+
+- [x] 30. Implement push notification registration
+  - Create lib/push.ts with push notification utilities
+  - Implement registerForPushNotifications function to request permissions
+  - Implement getPushTokenAsync function to retrieve Expo push token
+  - Configure Android notification channel for duress alerts with high importance
+  - Set vibration pattern and light color for alert notifications
+  - Handle permission denial gracefully
+  - Export push notification functions for use in app initialization
+  - _Requirements: 28.1, 28.2, 28.5, 34.2, 34.4_
+
+- [x] 31. Implement NFC stub module (Expo Go compatible)
+  - Create lib/nfc.ts with feature-flagged NFC functions
+  - Read EXPO_PUBLIC_NFC_ENABLED environment variable
+  - Export isNfcAvailable boolean based on environment flag
+  - Implement startNfcReader stub that throws error in Expo Go
+  - Implement stopNfcReader stub for future Development Build support
+  - Implement writeNfcTag stub for future Development Build support
+  - Add clear error messages explaining NFC requires Development Build
+  - _Requirements: 30.1, 30.2, 30.3, 30.4, 31.5_
+
+- [x] 32. Implement alerts state management
+  - Create state/useAlertsStore.ts with Zustand store
+  - Define Alert interface with id, kind, sessionId, customerRef, geo, createdAt, distance
+  - Define AlertsState with alerts array, lastCheckedAt, subscribed, wsConnection
+  - Implement addAlert action to add new alerts and compute distance
+  - Implement removeAlert action to dismiss acknowledged alerts
+  - Implement startForegroundAlerts action: try WebSocket first, fall back to polling
+  - Implement stopForegroundAlerts action: disconnect WebSocket and stop polling
+  - Implement connectWebSocket action to establish WebSocket connection
+  - Implement disconnectWebSocket action to close connection
+  - Debounce identical alerts for 60 seconds to prevent spam
+  - _Requirements: 25.1, 25.2, 25.4, 25.5, 29.3, 35.3, 35.4, 35.5_
+
+- [x] 33. Create AlertBanner component
+  - Create components/AlertBanner.tsx with alert display and actions
+  - Display "⚠️ Nearby Duress Alert" title with high contrast
+  - Display customer reference of user in duress
+  - Display distance to duress location if available
+  - Add "Acknowledge", "View Map", and "Call Emergency" action buttons
+  - Conditionally show "📱 NFC Confirm" button when EXPO_PUBLIC_NFC_ENABLED is true
+  - Trigger haptic feedback (warning pattern) on component mount
+  - Style with red background (#FF5252), white text, and accessible labels
+  - Add accessibility role="alert" and proper button labels
+  - _Requirements: 26.1, 26.2, 26.3, 26.4, 26.5, 29.1, 29.5, 30.5, 31.1_
+
+- [x] 34. Update LoginScreen to send duress alerts
+  - Import sendDuressAlert, getCurrentLocation from alert libraries
+  - After successful duress authentication (verdict === 'DURESS'), get current location
+  - Call sendDuressAlert with sessionId, tenantKey, geo, device info (platform, appVersion)
+  - Wrap duress alert sending in try-catch to fail silently (no UI indication)
+  - Log errors to console.warn without revealing duress state to user
+  - Ensure no visual difference between NORMAL and DURESS authentication flows
+  - _Requirements: 24.1, 24.2, 24.3, 24.4, 24.5_
+
+- [x] 35. Update LandingScreen to display alerts
+  - Import useAlertsStore, AlertBanner, and alert functions
+  - Add state for user's current location
+  - On component mount, get current location and call startForegroundAlerts
+  - On component unmount, call stopForegroundAlerts to clean up subscriptions
+  - Read alerts array from useAlertsStore
+  - Compute distance for first alert using calculateDistance and formatDistance
+  - Render AlertBanner when alerts[0] exists
+  - Implement handleAck to call ackAlert with 'INAPP' method and remove alert from store
+  - Implement handleMap as mock (console.log for now)
+  - Implement handleCall as mock (console.log for now)
+  - Implement handleNfc as mock (console.log for now)
+  - _Requirements: 25.1, 25.4, 26.3, 27.1, 27.2, 27.3, 27.5_
+
+- [x] 36. Add alert configuration to environment
+  - Update .env.example with EXPO_PUBLIC_NFC_ENABLED=false
+  - Add EXPO_PUBLIC_WS_URL for WebSocket connection (optional)
+  - Add ALERT_RADIUS_METERS=1000 for nearby alert search radius
+  - Add ALERT_POLL_INTERVAL_MS=15000 for polling interval
+  - Add comments explaining each alert-related variable
+  - Document Expo Go vs Development Build differences for NFC
+  - _Requirements: 30.1, 33.1, 33.2, 34.3_
+
+- [x] 37. Request permissions for alert functionality
+  - Update LoginScreen or App.tsx to request location permission on first launch
+  - Request notification permission on first launch or after authentication
+  - Display permission rationale before requesting (location for proximity, notifications for background alerts)
+  - Handle permission denial gracefully without blocking app functionality
+  - Store permission status in state to avoid repeated requests
+  - _Requirements: 34.1, 34.2, 34.3, 34.4, 34.5_
+
+- [x] 38. Write unit tests for alert functions
+  - Create tests/alerts.test.ts
+  - Test sendDuressAlert with valid data
+  - Test pollNearbyAlerts with different parameters
+  - Test ackAlert with different methods (NFC, PUSH, INAPP)
+  - Test connectAlertsSocket connection and message handling
+  - Mock fetch and WebSocket for testing
+  - _Requirements: 24.1, 25.2, 27.1_
+
+- [x] 39. Write unit tests for geolocation helpers
+  - Create tests/geo.test.ts
+  - Test calculateDistance with known coordinates
+  - Test formatDistance with meters and kilometers
+  - Test getCurrentLocation with granted and denied permissions
+  - Mock expo-location for testing
+  - _Requirements: 26.3, 28.8_
+
+- [x] 40. Write integration tests for AlertBanner
+  - Create tests/AlertBanner.test.tsx
+  - Test that alert information is displayed correctly
+  - Test that action buttons trigger callbacks
+  - Test that NFC button is conditionally rendered based on feature flag
+  - Test haptic feedback is triggered on mount
+  - Mock expo-haptics for testing
+  - _Requirements: 26.1, 26.4, 30.5_
+
+- [x] 41. Write integration tests for alert flow
+  - Create tests/alertFlow.test.ts
+  - Test duress login triggers sendDuressAlert
+  - Test LandingScreen subscribes to alerts on mount
+  - Test alert acknowledgment removes alert from store
+  - Test WebSocket fallback to polling
+  - Mock API calls and WebSocket for testing
+  - _Requirements: 24.1, 25.1, 27.3, 35.4_
+
+- [ ] 42. Manual testing for Duress Proximity Alerts
+  - Test duress login sends alert without visual indication
+  - Test nearby device receives alert in foreground (polling or WebSocket)
+  - Test alert banner displays with correct information and distance
+  - Test acknowledge button dismisses alert
+  - Test haptic and audio feedback on alert receipt
+  - Test NFC button only appears when EXPO_PUBLIC_NFC_ENABLED=true
+  - Test background push notifications (if configured)
+  - Test with two devices: one duress, one nearby
+  - Test WebSocket connection and fallback to polling
+  - Test alert debouncing (no repeated alerts within 60s)
+  - Verify Expo Go compatibility (NFC disabled)
+  - Test location permission flow
+  - Test notification permission flow
+  - _Requirements: 24.5, 25.4, 26.5, 27.5, 28.2, 28.3, 29.3, 30.4, 31.1, 34.5_
+
+- [ ] 43. Update README with alert system documentation
+  - Document Duress Proximity Alerts feature
+  - Explain Expo Go vs Development Build for NFC support
+  - Document alert configuration variables (NFC_ENABLED, WS_URL, RADIUS, POLL_INTERVAL)
+  - Document how to test alerts with two devices
+  - Document WebSocket vs polling behavior
+  - Document permission requirements (location, notifications)
+  - Include screenshots of AlertBanner
+  - _Requirements: 30.1, 33.1, 34.3, 35.1_

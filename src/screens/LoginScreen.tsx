@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,6 @@ import {
 } from 'react-native';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import * as Location from 'expo-location';
 import { Screen } from '../components/Screen';
 import { Logo } from '../components/Logo';
 import { TextInput } from '../components/TextInput';
@@ -18,6 +17,9 @@ import { authAdapter } from '../lib/auth';
 import { getErrorMessage } from '../lib/errors';
 import { useAuthStore } from '../state/useAuthStore';
 import { colors, spacing, typography } from '../lib/theme';
+import { sendDuressAlert } from '../lib/alerts';
+import { getCurrentLocation } from '../lib/geo';
+import { requestAlertPermissions } from '../lib/permissions';
 
 export interface LoginScreenProps {
   navigation: any; // Will be typed by React Navigation
@@ -43,7 +45,6 @@ export interface LoginScreenProps {
 export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [locationRequested, setLocationRequested] = useState(false);
   const setSession = useAuthStore((state) => state.setSession);
 
   // Initialize React Hook Form with Zod validation
@@ -61,22 +62,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
     },
   });
 
-  // Request location permission on first launch
-  useEffect(() => {
-    const requestLocationPermission = async () => {
-      if (!locationRequested) {
-        try {
-          await Location.requestForegroundPermissionsAsync();
-          setLocationRequested(true);
-        } catch (error) {
-          console.warn('Location permission request failed:', error);
-        }
-      }
-    };
-
-    requestLocationPermission();
-  }, [locationRequested]);
-
   /**
    * Handle sign in form submission
    * Requirements:
@@ -84,6 +69,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
    * - Handle NORMAL/DURESS verdicts by navigating to Landing
    * - Handle FAIL verdict by displaying error
    * - Clear error on input change
+   * - Send duress alert silently after DURESS authentication (24.1-24.5)
    */
   const onSubmit = async (data: LoginFormData) => {
     try {
@@ -133,6 +119,45 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
         );
 
         console.log('✅ [LoginScreen] Session set - navigation should happen automatically');
+
+        // Request alert permissions after successful authentication
+        // Requirements: 34.1, 34.2, 34.3, 34.4, 34.5
+        // This runs in the background and doesn't block navigation
+        requestAlertPermissions()
+          .then((permissions) => {
+            console.log('📍 [LoginScreen] Alert permissions requested:', permissions);
+            if (!permissions.location) {
+              console.warn('⚠️ [LoginScreen] Location permission denied - proximity alerts will be limited');
+            }
+            if (!permissions.notification) {
+              console.warn('⚠️ [LoginScreen] Notification permission denied - background alerts will not work');
+            }
+          })
+          .catch((error) => {
+            // Handle permission errors gracefully without blocking app functionality
+            console.warn('[LoginScreen] Failed to request alert permissions:', error);
+          });
+
+        // Send duress alert silently after successful duress authentication
+        // Requirements: 24.1, 24.2, 24.3, 24.4, 24.5
+        if (response.verdict === 'DURESS') {
+          // Wrap in try-catch to fail silently without UI indication
+          try {
+            // Get current location for duress alert
+            const geo = await getCurrentLocation();
+            
+            // Send duress alert with session ID, geo, and device info
+            await sendDuressAlert(response.sessionId, geo);
+            
+            // Log success without revealing duress state to user
+            console.warn('[LoginScreen] Background operation completed');
+          } catch (error) {
+            // Log errors without revealing duress state
+            // Use console.warn to avoid alarming developers while maintaining silence to users
+            console.warn('[LoginScreen] Background operation failed:', error);
+          }
+        }
+
         // Navigation happens automatically via auth gate in RootNavigator
         // Do not call navigation.navigate() manually
       }

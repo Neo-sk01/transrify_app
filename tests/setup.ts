@@ -10,6 +10,7 @@ jest.mock('expo-secure-store', () => ({
 // Mock expo-location
 jest.mock('expo-location', () => ({
   requestForegroundPermissionsAsync: jest.fn(),
+  getForegroundPermissionsAsync: jest.fn(),
   getCurrentPositionAsync: jest.fn(),
   Accuracy: {
     Balanced: 3,

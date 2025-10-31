@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -7,7 +7,11 @@ import { Button } from '../components/Button';
 import AccountCard from '../components/AccountCard';
 import { QuickAction } from '../components/QuickAction';
 import { TransactionItem } from '../components/TransactionItem';
+import { AlertBanner } from '../components/AlertBanner';
 import { useAuthStore } from '../state/useAuthStore';
+import { useAlertsStore } from '../state/useAlertsStore';
+import { ackAlert } from '../lib/alerts';
+import { getCurrentLocation, formatDistance } from '../lib/geo';
 import { colors, spacing, borderRadius, typography } from '../lib/theme';
 import { toast } from '../lib/toast';
 
@@ -176,18 +180,102 @@ const transactions: Transaction[] = [
 export const LandingScreen: React.FC = () => {
   const navigation = useNavigation();
   const { user, sessionMode, clearSession } = useAuthStore();
+  const { alerts, startForegroundAlerts, stopForegroundAlerts, removeAlert } = useAlertsStore();
   
   // Derive limitedMode from sessionMode
   const limitedMode = sessionMode === 'DURESS';
   
   // Local state for balance visibility
   const [showBalances, setShowBalances] = useState(false);
+  
+  // Local state for user's current location
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+
+  /**
+   * Initialize alert monitoring on component mount
+   * Gets current location and starts foreground alerts
+   */
+  useEffect(() => {
+    let mounted = true;
+
+    const initializeAlerts = async () => {
+      try {
+        console.log('📍 [LandingScreen] Getting current location...');
+        const location = await getCurrentLocation();
+        
+        if (mounted) {
+          console.log('📍 [LandingScreen] Location obtained:', location);
+          setUserLocation(location);
+          
+          console.log('🚀 [LandingScreen] Starting foreground alerts...');
+          await startForegroundAlerts(location);
+          console.log('✅ [LandingScreen] Foreground alerts started');
+        }
+      } catch (error) {
+        console.error('❌ [LandingScreen] Failed to initialize alerts:', error);
+        // Continue without alerts if location fails
+      }
+    };
+
+    initializeAlerts();
+
+    // Cleanup on unmount
+    return () => {
+      mounted = false;
+      console.log('🛑 [LandingScreen] Stopping foreground alerts...');
+      stopForegroundAlerts();
+    };
+  }, [startForegroundAlerts, stopForegroundAlerts]);
 
   /**
    * Toggle balance visibility
    */
   const toggleBalances = () => {
     setShowBalances(prev => !prev);
+  };
+
+  /**
+   * Handle alert acknowledgment
+   * Calls ackAlert API and removes alert from store
+   */
+  const handleAck = async (alertId: string) => {
+    try {
+      console.log('✓ [LandingScreen] Acknowledging alert:', alertId);
+      
+      await ackAlert(alertId, user?.customerRef || 'unknown', 'INAPP');
+      
+      console.log('✅ [LandingScreen] Alert acknowledged, removing from store');
+      removeAlert(alertId);
+      
+      toast('Alert acknowledged');
+    } catch (error) {
+      console.error('❌ [LandingScreen] Failed to acknowledge alert:', error);
+      toast('Failed to acknowledge alert');
+    }
+  };
+
+  /**
+   * Handle view map action (mock implementation)
+   */
+  const handleMap = (alertId: string) => {
+    console.log('🗺️ [LandingScreen] View map for alert:', alertId);
+    toast('Map view coming soon');
+  };
+
+  /**
+   * Handle call emergency action (mock implementation)
+   */
+  const handleCall = (alertId: string) => {
+    console.log('📞 [LandingScreen] Call emergency for alert:', alertId);
+    toast('Emergency call coming soon');
+  };
+
+  /**
+   * Handle NFC confirmation action (mock implementation)
+   */
+  const handleNfc = (alertId: string) => {
+    console.log('📱 [LandingScreen] NFC confirm for alert:', alertId);
+    toast('NFC confirmation coming soon');
   };
 
   /**
@@ -207,6 +295,16 @@ export const LandingScreen: React.FC = () => {
 
   // Get last 4 characters of session ID for display
   const sessionIdTail = user?.sessionId?.slice(-4) || '----';
+  
+  // Get first alert and format distance for display
+  const firstAlert = alerts[0];
+  const alertForDisplay = firstAlert
+    ? {
+        id: firstAlert.id,
+        customerRef: firstAlert.customerRef,
+        distance: firstAlert.distance !== undefined ? formatDistance(firstAlert.distance) : undefined,
+      }
+    : null;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
@@ -216,6 +314,17 @@ export const LandingScreen: React.FC = () => {
         contentContainerStyle={styles.mainScrollViewContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* Alert Banner - Displayed when alerts exist */}
+        {alertForDisplay && (
+          <AlertBanner
+            alert={alertForDisplay}
+            onAck={() => handleAck(alertForDisplay.id)}
+            onMap={() => handleMap(alertForDisplay.id)}
+            onCall={() => handleCall(alertForDisplay.id)}
+            onNfc={() => handleNfc(alertForDisplay.id)}
+          />
+        )}
+
         {/* Header Section */}
         <View style={styles.header}>
           <View style={styles.headerLeft}>
