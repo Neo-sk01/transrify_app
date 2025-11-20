@@ -207,7 +207,7 @@ export function connectAlertsSocket(
   // Get WebSocket URL from environment or construct from API base URL
   const wsUrl = process.env.EXPO_PUBLIC_WS_URL || 
     process.env.EXPO_PUBLIC_API_BASE_URL?.replace(/^http/, 'ws') || 
-    'ws://api.example.com';
+    'ws://3.89.253.228';
   
   // Construct WebSocket URL with tenant key as query parameter
   const url = `${wsUrl}/v1/alerts/stream?tenantKey=${encodeURIComponent(TENANT_KEY)}`;

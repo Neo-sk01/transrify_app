@@ -1,8 +1,11 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 
-export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'https://api.example.com';
-export const TENANT_KEY = process.env.EXPO_PUBLIC_TENANT_KEY ?? 'DEMO_TENANT';
+//export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'https://api.example.com';
+export const API_BASE_URL = 'https://carboapi.me';
+
+//export const TENANT_KEY = process.env.EXPO_PUBLIC_TENANT_KEY ?? 'DEMO_TENANT';
+export const TENANT_KEY = 'DEMO_BANK_KEY';
 export const APP_VERSION = Constants.expoConfig?.version ?? '1.0.0';
 
 export const isAndroid = Platform.OS === 'android';

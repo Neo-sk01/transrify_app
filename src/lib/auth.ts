@@ -285,7 +285,7 @@ export class TransrifyAuthAdapter implements AuthAdapter {
  * Export adapter based on environment configuration
  */
 const USE_MOCK_AUTH = process.env.EXPO_PUBLIC_USE_MOCK_AUTH === 'true';
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://api.transrify.com';
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://carboapi.me';
 
 console.log('🔧 [auth] Initializing auth adapter...');
 console.log('🔧 [auth] USE_MOCK_AUTH:', USE_MOCK_AUTH);
