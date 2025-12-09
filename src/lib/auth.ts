@@ -25,6 +25,10 @@ export interface LoginResponse {
   verdict: 'NORMAL' | 'DURESS' | 'FAIL';
   recommendedAction: 'ALLOW' | 'LIMIT_AND_MONITOR' | 'DENY';
   sessionId: string;
+  /**
+   * Incident identifier for evidence capture (present on DURESS verdicts).
+   */
+  incidentId?: string;
 }
 
 /**
@@ -99,8 +103,9 @@ export class MockAuthAdapter implements AuthAdapter {
     const verdict = isDuress ? 'DURESS' : 'NORMAL';
     const recommendedAction = isDuress ? 'LIMIT_AND_MONITOR' : 'ALLOW';
 
-    // Generate mock session ID
+    // Generate mock session ID and incident ID
     const sessionId = `mock-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`;
+    const incidentId = `incident-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 
     // Store session data in SecureStore
     await storage.setSessionId(sessionId);
@@ -111,6 +116,7 @@ export class MockAuthAdapter implements AuthAdapter {
       verdict,
       recommendedAction,
       sessionId,
+      incidentId: verdict === 'DURESS' ? incidentId : undefined,
     };
   }
 
@@ -193,6 +199,11 @@ export class TransrifyAuthAdapter implements AuthAdapter {
         await storage.setSessionId(data.sessionId);
         await storage.setCustomerRef(customerRef);
         await storage.setSessionMode(data.verdict);
+        if (data.verdict === 'DURESS' && data.incidentId) {
+          await storage.setIncidentId(data.incidentId);
+        } else {
+          await storage.deleteIncidentId();
+        }
       }
 
       return data;

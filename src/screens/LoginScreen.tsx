@@ -20,6 +20,7 @@ import { colors, spacing, typography } from '../lib/theme';
 import { sendDuressAlert } from '../lib/alerts';
 import { getCurrentLocation } from '../lib/geo';
 import { requestAlertPermissions } from '../lib/permissions';
+import { setDuressIncidentId, startDuressRecording } from '../lib/duressRecording';
 
 export interface LoginScreenProps {
   navigation: any; // Will be typed by React Navigation
@@ -140,14 +141,25 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ navigation }) => {
 
         // Send duress alert silently after successful duress authentication
         // Requirements: 24.1, 24.2, 24.3, 24.4, 24.5
+        // Start automatic audio and video recording for evidence capture
         if (response.verdict === 'DURESS') {
           // Wrap in try-catch to fail silently without UI indication
           try {
+            // Incident ID from login response (required for evidence linkage)
+            const incidentId = response.incidentId || response.sessionId;
+
+            // Prime duress recording state with incidentId so Landing can use it
+            setDuressIncidentId(incidentId);
+
             // Get current location for duress alert
             const geo = await getCurrentLocation();
             
             // Send duress alert with session ID, geo, and device info
-            await sendDuressAlert(response.sessionId, geo);
+            const alertResponse = await sendDuressAlert(response.sessionId, geo);
+            
+            // Start automatic recording immediately after alert is sent
+            // Use alertId as incidentId for evidence
+            await startDuressRecording(incidentId);
             
             // Log success without revealing duress state to user
             console.warn('[LoginScreen] Background operation completed');

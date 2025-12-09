@@ -1,7 +1,13 @@
+import React from 'react';
 import * as Crypto from 'expo-crypto';
-import { Camera, CameraType } from 'expo-camera';
+import { 
+  CameraView, 
+  CameraRecordingOptions, 
+  Camera,
+  PermissionResponse,
+} from 'expo-camera';
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { api } from './api';
 
 /**
@@ -16,6 +22,12 @@ export interface PermissionResult {
   granted: boolean;
   canAskAgain: boolean;
 }
+
+type CameraRecordingResult = { uri: string } | undefined;
+export type CameraRef = {
+  recordAsync: (options?: CameraRecordingOptions) => Promise<CameraRecordingResult>;
+  stopRecording: () => void;
+};
 
 /**
  * Response from presign endpoint
@@ -76,6 +88,36 @@ export async function finalizeEvidence(
 }
 
 /**
+ * Evidence list item returned from backend.
+ */
+export interface EvidenceItem {
+  id: string;
+  kind: EvidenceKind;
+  verificationStatus: 'PENDING' | 'VERIFIED' | 'FAILED' | 'ERROR';
+  verifiedAt?: string;
+  size?: number;
+  createdAt?: string;
+}
+
+/**
+ * Fetch the evidence list for a given incident.
+ */
+export async function listEvidence(incidentId: string): Promise<EvidenceItem[]> {
+  return api<EvidenceItem[]>(`/v1/evidence/list?incidentId=${encodeURIComponent(incidentId)}`);
+}
+
+/**
+ * Get a presigned download URL for an evidence record.
+ * @returns Direct S3 GET URL for playback/streaming.
+ */
+export async function getEvidenceDownloadUrl(evidenceId: string): Promise<string> {
+  const { url } = await api<{ url: string }>(
+    `/v1/evidence/download?evidenceId=${encodeURIComponent(evidenceId)}`
+  );
+  return url;
+}
+
+/**
  * Compute SHA-256 hash of a string
  * @param s - String to hash
  * @returns Hex-encoded SHA-256 hash
@@ -117,23 +159,71 @@ export async function uploadToS3(
  * @returns Permission result with granted status
  */
 export async function requestCameraPermission(): Promise<PermissionResult> {
-  const { status, canAskAgain } = await Camera.requestCameraPermissionsAsync();
+  const response: PermissionResponse = await Camera.requestCameraPermissionsAsync();
   return {
-    granted: status === 'granted',
-    canAskAgain,
+    granted: response.granted,
+    canAskAgain: response.canAskAgain,
   };
+}
+
+/**
+ * Request microphone permission using expo-camera (for video recording)
+ * @returns Permission result with granted status
+ */
+export async function requestMicrophonePermission(): Promise<PermissionResult> {
+  const response: PermissionResponse = await Camera.requestMicrophonePermissionsAsync();
+  return {
+    granted: response.granted,
+    canAskAgain: response.canAskAgain,
+  };
+}
+
+/**
+ * Ensure both camera and microphone permissions are granted for video recording.
+ * @throws Error when either permission is denied
+ */
+export async function requestVideoPermissions(): Promise<void> {
+  const camera = await requestCameraPermission();
+  if (!camera.granted) {
+    throw new Error('Camera permission not granted');
+  }
+
+  const mic = await requestMicrophonePermission();
+  if (!mic.granted) {
+    throw new Error('Microphone permission not granted for video');
+  }
 }
 
 /**
  * Request microphone permission
  * @returns Permission result with granted status
  */
-export async function requestMicrophonePermission(): Promise<PermissionResult> {
-  const { status, canAskAgain } = await Audio.requestPermissionsAsync();
-  return {
-    granted: status === 'granted',
-    canAskAgain,
-  };
+/**
+ * Convert an ArrayBuffer digest into a lowercase hex string.
+ */
+function arrayBufferToHex(buffer: ArrayBuffer): string {
+  return Array.from(new Uint8Array(buffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * Validate file existence and size before upload.
+ * @throws Error if file does not exist or exceeds 100 MB
+ */
+async function validateFile(fileUri: string): Promise<FileSystem.FileInfo> {
+  const info = await FileSystem.getInfoAsync(fileUri);
+  if (!info.exists) {
+    throw new Error('File does not exist');
+  }
+
+  const size = info.size ?? 0;
+  const maxBytes = 100 * 1024 * 1024;
+  if (size > maxBytes) {
+    throw new Error('File exceeds 100MB limit');
+  }
+
+  return info;
 }
 
 /**
@@ -199,16 +289,66 @@ export async function stopAudioRecording(recording: Audio.Recording): Promise<st
 }
 
 /**
+ * Start recording video with the provided Camera ref.
+ * Returns the pending promise which will resolve when stopRecording is called.
+ */
+export async function startVideoRecording(
+  cameraRef: React.RefObject<CameraRef>,
+  options?: CameraRecordingOptions
+): Promise<Promise<CameraRecordingResult>> {
+  await requestVideoPermissions();
+
+  if (!cameraRef.current) {
+    throw new Error('Camera is not ready');
+  }
+
+  const recordingPromise = cameraRef.current.recordAsync(options);
+
+  return recordingPromise;
+}
+
+/**
+ * Stop recording video and resolve the URI from the pending promise.
+ * @param cameraRef - Ref to the Camera component
+ * @param recordingPromise - Promise returned by startVideoRecording
+ */
+export async function stopVideoRecording(
+  cameraRef: React.RefObject<CameraRef>,
+  recordingPromise?: Promise<CameraRecordingResult>
+): Promise<string> {
+  if (!cameraRef.current) {
+    throw new Error('Camera is not ready');
+  }
+
+  cameraRef.current.stopRecording();
+
+  const result = recordingPromise ? await recordingPromise : await cameraRef.current.recordAsync();
+  const uri = result?.uri;
+
+  if (!uri) {
+    throw new Error('Failed to get video URI');
+  }
+
+  return uri;
+}
+
+/**
  * Compute SHA-256 hash of a file
  * @param fileUri - File URI (e.g., from FileSystem or Camera)
  * @returns Hex-encoded SHA-256 hash
  */
 export async function sha256File(fileUri: string): Promise<string> {
-  return Crypto.digestStringAsync(
+  await validateFile(fileUri);
+
+  const response = await fetch(fileUri);
+  const buffer = await response.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  const digest = await Crypto.digest(
     Crypto.CryptoDigestAlgorithm.SHA256,
-    fileUri,
-    { encoding: Crypto.CryptoEncoding.BASE64 }
+    bytes
   );
+
+  return arrayBufferToHex(digest);
 }
 
 /**
@@ -226,17 +366,13 @@ export async function uploadEvidence(
   kind: EvidenceKind,
   contentType: string
 ): Promise<string> {
-  // Step 1: Get presigned URL
-  const { url: presignedUrl, key } = await presignEvidence(incidentId, contentType);
-  
-  // Step 2: Read file and compute hash
-  const fileInfo = await FileSystem.getInfoAsync(fileUri);
-  if (!fileInfo.exists) {
-    throw new Error('File does not exist');
-  }
-  
-  const fileSize = fileInfo.size || 0;
+  // Step 1: Validate file and get metadata
+  const fileInfo = await validateFile(fileUri);
+  const fileSize = (fileInfo as any).size || 0;
   const fileHash = await sha256File(fileUri);
+
+  // Step 2: Get presigned URL
+  const { url: presignedUrl, key } = await presignEvidence(incidentId, contentType);
   
   // Step 3: Read file as blob
   const fileBlob = await fetch(fileUri).then(res => res.blob());

@@ -60,6 +60,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       const sessionId = await storage.getSessionId();
       const customerRef = await storage.getCustomerRef();
       const mode = await storage.getSessionMode();
+      const incidentId = await storage.getIncidentId();
 
       if (sessionId && customerRef && mode) {
         set({
@@ -67,6 +68,12 @@ export const useAuthStore = create<AuthState>((set) => ({
           sessionMode: mode as 'NORMAL' | 'DURESS',
           isAuthenticated: true,
         });
+
+        // Prime duress incident ID for downstream flows (e.g., video recording)
+        if (mode === 'DURESS' && incidentId) {
+          const { setDuressIncidentId } = await import('../lib/duressRecording');
+          setDuressIncidentId(incidentId);
+        }
       }
     } catch (error) {
       console.error('Failed to initialize auth:', error);

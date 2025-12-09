@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, FlatList } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { CameraView, CameraRecordingOptions, Camera } from 'expo-camera';
 import { Button } from '../components/Button';
 import AccountCard from '../components/AccountCard';
 import { QuickAction } from '../components/QuickAction';
@@ -14,6 +15,8 @@ import { ackAlert } from '../lib/alerts';
 import { getCurrentLocation, formatDistance } from '../lib/geo';
 import { colors, spacing, borderRadius, typography } from '../lib/theme';
 import { toast } from '../lib/toast';
+import { getDuressIncidentId, uploadDuressVideo, stopDuressRecording } from '../lib/duressRecording';
+import { requestCameraPermission, requestMicrophonePermission } from '../lib/evidence';
 
 /**
  * Masked balance constant for hiding account balances
@@ -190,6 +193,58 @@ export const LandingScreen: React.FC = () => {
   
   // Local state for user's current location
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  
+  // Camera ref for duress video recording
+  // Note: CameraView ref type is CameraViewRef, but we need to use the component ref
+  const cameraRef = useRef<CameraView>(null);
+  const videoRecordingPromiseRef = useRef<Promise<{ uri: string } | undefined> | null>(null);
+  const videoStopTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const videoStoppingRef = useRef(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [refMethodsReady, setRefMethodsReady] = useState(false);
+  const [isCameraInitialized, setIsCameraInitialized] = useState(false);
+
+  /**
+   * Debug utility to inspect camera ref state
+   */
+  const debugCameraRef = () => {
+    console.group('📸 [LandingScreen] Camera Ref Debug');
+    console.log('cameraRef.current:', cameraRef.current);
+    
+    if (cameraRef.current) {
+      const methods = Object.keys(cameraRef.current).filter(
+        key => typeof (cameraRef.current as any)[key] === 'function'
+      );
+      console.log('Available methods:', methods);
+      console.log('hasRecordAsync:', typeof (cameraRef.current as any).recordAsync === 'function');
+      console.log('hasStopRecording:', typeof (cameraRef.current as any).stopRecording === 'function');
+    }
+    
+    console.log('cameraReady state:', cameraReady);
+    console.log('refMethodsReady state:', refMethodsReady);
+    console.log('isCameraInitialized state:', isCameraInitialized);
+    console.groupEnd();
+  };
+
+  /**
+   * Check camera permissions on mount
+   */
+  useEffect(() => {
+    const checkCameraPermissions = async () => {
+      try {
+        const cameraPermissions = await Camera.getCameraPermissionsAsync();
+        console.log('📷 [LandingScreen] Camera permissions:', {
+          granted: cameraPermissions.granted,
+          status: cameraPermissions.status,
+          canAskAgain: cameraPermissions.canAskAgain,
+        });
+      } catch (error) {
+        console.error('❌ [LandingScreen] Camera permission check failed:', error);
+      }
+    };
+    
+    checkCameraPermissions();
+  }, []);
 
   /**
    * Initialize alert monitoring on component mount
@@ -226,6 +281,220 @@ export const LandingScreen: React.FC = () => {
       stopForegroundAlerts();
     };
   }, [startForegroundAlerts, stopForegroundAlerts]);
+
+  /**
+   * Start video recording when in duress mode
+   * Automatically starts recording video evidence when duress mode is active
+   */
+  useEffect(() => {
+    if (!limitedMode) {
+      return;
+    }
+
+    let mounted = true;
+
+    const clearVideoStopTimer = () => {
+      if (videoStopTimeoutRef.current) {
+        clearTimeout(videoStopTimeoutRef.current);
+        videoStopTimeoutRef.current = null;
+      }
+    };
+
+    const stopVideoRecording = async () => {
+      if (videoStoppingRef.current) return;
+      videoStoppingRef.current = true;
+      clearVideoStopTimer();
+
+      try {
+        if (cameraRef.current && videoRecordingPromiseRef.current) {
+          console.log('🛑 [LandingScreen] Stopping video recording...');
+          cameraRef.current.stopRecording();
+
+          const result = await videoRecordingPromiseRef.current;
+          if (result?.uri) {
+            console.log('📤 [LandingScreen] Uploading final video...');
+            await uploadDuressVideo(result.uri);
+          }
+        }
+      } catch (error) {
+        console.error('❌ [LandingScreen] Error stopping video recording:', error);
+      } finally {
+        videoRecordingPromiseRef.current = null;
+        videoStoppingRef.current = false;
+      }
+    };
+
+    const startVideoRecording = async () => {
+      try {
+        // Check if we have an incident ID (from duress login)
+        const incidentId = getDuressIncidentId();
+        if (!incidentId) {
+          console.warn('⚠️ [LandingScreen] No incident ID for video recording');
+          return;
+        }
+
+        // Request camera and microphone permissions
+        console.log('🎥 [LandingScreen] Requesting camera permissions...');
+        const cameraPermission = await requestCameraPermission();
+        const micPermission = await requestMicrophonePermission();
+        console.log('🎥 [LandingScreen] Camera perm granted:', cameraPermission.granted, 'Mic perm granted:', micPermission.granted);
+
+        if (!cameraPermission.granted || !micPermission.granted) {
+          console.warn('⚠️ [LandingScreen] Camera/mic permissions not granted for video recording');
+          return;
+        }
+
+        // Improved wait logic: Check both cameraReady state AND ref methods
+        const waitForCameraReady = async (maxAttempts = 20, delay = 150): Promise<boolean> => {
+          console.log(`⏳ [LandingScreen] Waiting for camera (${maxAttempts} attempts, ${delay}ms delay)`);
+          
+          for (let i = 0; i < maxAttempts; i++) {
+            // Check if ref exists and has recordAsync method
+            const hasRef = !!cameraRef.current;
+            const hasRecordAsync = hasRef && typeof (cameraRef.current as any)?.recordAsync === 'function';
+            const hasStopRecording = hasRef && typeof (cameraRef.current as any)?.stopRecording === 'function';
+            
+            if (hasRef && hasRecordAsync && hasStopRecording) {
+              console.log(`✅ [LandingScreen] Camera ready after ${i + 1} attempts`);
+              return true;
+            }
+            
+            console.log(`⌛ [LandingScreen] Attempt ${i + 1}/${maxAttempts}:`, {
+              hasRef,
+              hasRecordAsync,
+              hasStopRecording,
+              cameraReadyState: cameraReady,
+              refMethodsReady,
+              isCameraInitialized,
+            });
+            
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+          
+          console.warn('❌ [LandingScreen] Camera not ready after max attempts');
+          return false;
+        };
+
+        const isCameraReady = await waitForCameraReady();
+
+        // Debug camera ref before proceeding
+        debugCameraRef();
+        
+        // Log comprehensive camera state
+        const cameraState = {
+          mounted,
+          hasRef: !!cameraRef.current,
+          cameraReady,
+          refMethodsReady,
+          isCameraInitialized,
+          refMethods: cameraRef.current ? {
+            hasRecord: typeof (cameraRef.current as any).record === 'function',
+            hasRecordAsync: typeof (cameraRef.current as any).recordAsync === 'function',
+            hasStopRecording: typeof (cameraRef.current as any).stopRecording === 'function',
+            allMethods: Object.keys(cameraRef.current).filter(key => typeof (cameraRef.current as any)[key] === 'function'),
+          } : null,
+        };
+        console.log('📷 [LandingScreen] Camera state:', JSON.stringify(cameraState, null, 2));
+
+        if (!mounted || !cameraRef.current || !isCameraReady) {
+          console.warn('⚠️ [LandingScreen] Camera not ready for video recording', cameraState);
+          return;
+        }
+
+        console.log('🎥 [LandingScreen] Starting video recording...');
+        
+        // Start recording with reasonable quality settings
+        const recordingOptions: CameraRecordingOptions = {
+          maxDuration: 3600, // 1 hour max
+          maxFileSize: 100 * 1024 * 1024, // 100 MB max
+        };
+
+        // CameraView ref exposes record method (not recordAsync) according to CameraViewRef interface
+        const cameraViewInstance = cameraRef.current;
+        // Check for both 'record' and 'recordAsync' methods (different SDK versions may use different names)
+        const recordMethod = (cameraViewInstance as any)?.recordAsync || (cameraViewInstance as any)?.record;
+        
+        if (cameraViewInstance && typeof recordMethod === 'function') {
+          console.log('🎥 [LandingScreen] Camera ref ready, calling record method');
+          videoRecordingPromiseRef.current = recordMethod.call(cameraViewInstance, recordingOptions);
+          console.log('✅ [LandingScreen] Record method called, promise created');
+        } else {
+          console.warn('⚠️ [LandingScreen] Record method not available on camera ref', {
+            hasInstance: !!cameraViewInstance,
+            hasRecord: typeof (cameraViewInstance as any)?.record === 'function',
+            hasRecordAsync: typeof (cameraViewInstance as any)?.recordAsync === 'function',
+            availableMethods: cameraViewInstance ? Object.keys(cameraViewInstance).filter(key => typeof (cameraViewInstance as any)[key] === 'function') : [],
+          });
+          return;
+        }
+        
+        // Handle recording completion
+        const recordingPromise = videoRecordingPromiseRef.current;
+        if (recordingPromise) {
+          recordingPromise
+            .then(async (result) => {
+              if (!mounted) return;
+              
+              if (result?.uri) {
+                console.log('✅ [LandingScreen] Video recording completed:', result.uri);
+                try {
+                  await uploadDuressVideo(result.uri);
+                } catch (error) {
+                  console.error('❌ [LandingScreen] Failed to upload video:', error);
+                }
+              }
+            })
+            .catch((error) => {
+              if (mounted) {
+                console.error('❌ [LandingScreen] Video recording error:', error);
+              }
+            });
+        } else {
+          console.warn('⚠️ [LandingScreen] No recording promise available');
+          return;
+        }
+
+        console.log('✅ [LandingScreen] Video recording started');
+
+        // Auto-stop after ~8s to ensure enough data for upload
+        clearVideoStopTimer();
+        videoStopTimeoutRef.current = setTimeout(stopVideoRecording, 8_000);
+      } catch (error) {
+        console.error('❌ [LandingScreen] Failed to start video recording:', error);
+      }
+    };
+
+    // Start recording after camera is initialized (use effect dependency on isCameraInitialized)
+    // If camera is already initialized, start immediately, otherwise wait
+    const timeoutId = setTimeout(() => {
+      if (isCameraInitialized || cameraReady) {
+        startVideoRecording();
+      } else {
+        // Wait a bit longer if not initialized
+        setTimeout(startVideoRecording, 2000);
+      }
+    }, 1500);
+
+    // Cleanup: stop recording and upload when duress mode ends or component unmounts
+    return () => {
+      mounted = false;
+      clearTimeout(timeoutId);
+      clearVideoStopTimer();
+      
+      const stopRecording = async () => {
+        try {
+          await stopVideoRecording();
+          
+          // Stop audio recording and upload
+          await stopDuressRecording();
+        } catch (error) {
+          console.error('❌ [LandingScreen] Error stopping recording:', error);
+        }
+      };
+      
+      stopRecording();
+    };
+  }, [limitedMode, cameraReady, refMethodsReady, isCameraInitialized]);
 
   /**
    * Toggle balance visibility
@@ -308,6 +577,63 @@ export const LandingScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
+      {/* Hidden camera for duress video recording - positioned off-screen */}
+      {limitedMode && (
+        <View style={styles.hiddenCameraContainer}>
+          <CameraView
+            ref={cameraRef}
+            style={styles.hiddenCamera}
+            facing="back"
+            mode="video"
+            active={true}
+            onCameraReady={() => {
+              console.log('✅ [LandingScreen] Camera ready callback fired');
+              
+              // Set camera ready state
+              setCameraReady(true);
+              
+              // Wait a small amount for ref to be fully initialized
+              setTimeout(() => {
+                if (cameraRef.current) {
+                  const hasRecordAsync = typeof (cameraRef.current as any)?.recordAsync === 'function';
+                  const hasStopRecording = typeof (cameraRef.current as any)?.stopRecording === 'function';
+                  
+                  if (hasRecordAsync && hasStopRecording) {
+                    console.log('✅ [LandingScreen] Camera fully initialized with ref methods');
+                    setRefMethodsReady(true);
+                    setIsCameraInitialized(true);
+                  } else {
+                    console.warn('⚠️ [LandingScreen] Camera ready but ref methods not yet available');
+                    // Retry checking methods after a short delay
+                    setTimeout(() => {
+                      if (cameraRef.current) {
+                        const retryHasRecordAsync = typeof (cameraRef.current as any)?.recordAsync === 'function';
+                        const retryHasStopRecording = typeof (cameraRef.current as any)?.stopRecording === 'function';
+                        if (retryHasRecordAsync && retryHasStopRecording) {
+                          console.log('✅ [LandingScreen] Camera ref methods available after retry');
+                          setRefMethodsReady(true);
+                          setIsCameraInitialized(true);
+                        }
+                      }
+                    }, 500);
+                  }
+                }
+              }, 100);
+              
+              // Debug logging
+              console.log('📷 [LandingScreen] Camera ref state:', {
+                hasRef: !!cameraRef.current,
+                refType: cameraRef.current ? typeof cameraRef.current : 'null',
+                availableMethods: cameraRef.current ? Object.keys(cameraRef.current).filter(key => typeof (cameraRef.current as any)[key] === 'function') : [],
+              });
+            }}
+            onMountError={(error) => {
+              console.error('❌ [LandingScreen] Camera mount error:', error);
+            }}
+          />
+        </View>
+      )}
+      
       {/* Main ScrollView for all content */}
       <ScrollView 
         style={styles.mainScrollView}
@@ -587,6 +913,19 @@ const styles = StyleSheet.create({
     fontWeight: typography.body.fontWeight,
     color: colors.textSecondary,
     flex: 1,
+  },
+  hiddenCameraContainer: {
+    position: 'absolute',
+    top: -1000, // Position off-screen
+    left: -1000,
+    width: 1,
+    height: 1,
+    overflow: 'hidden',
+    opacity: 0,
+  },
+  hiddenCamera: {
+    width: 1,
+    height: 1,
   },
 });
 

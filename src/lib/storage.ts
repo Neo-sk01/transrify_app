@@ -8,6 +8,7 @@ const STORAGE_KEYS = {
   CUSTOMER_REF: 'transrify_customer_ref',
   SESSION_MODE: 'transrify_session_mode',
   TENANT_KEY: 'transrify_tenant_key',
+  INCIDENT_ID: 'transrify_incident_id',
 } as const;
 
 /**
@@ -126,6 +127,36 @@ export async function deleteTenantKey(): Promise<void> {
     await SecureStore.deleteItemAsync(STORAGE_KEYS.TENANT_KEY);
   } catch (error) {
     console.error('Failed to delete tenant key:', error);
+    throw new Error('STORAGE_ERROR');
+  }
+}
+
+/**
+ * Incident ID storage functions (for duress evidence linkage)
+ */
+export async function setIncidentId(incidentId: string): Promise<void> {
+  try {
+    await SecureStore.setItemAsync(STORAGE_KEYS.INCIDENT_ID, incidentId);
+  } catch (error) {
+    console.error('Failed to store incident ID:', error);
+    throw new Error('STORAGE_ERROR');
+  }
+}
+
+export async function getIncidentId(): Promise<string | null> {
+  try {
+    return await SecureStore.getItemAsync(STORAGE_KEYS.INCIDENT_ID);
+  } catch (error) {
+    console.error('Failed to retrieve incident ID:', error);
+    return null;
+  }
+}
+
+export async function deleteIncidentId(): Promise<void> {
+  try {
+    await SecureStore.deleteItemAsync(STORAGE_KEYS.INCIDENT_ID);
+  } catch (error) {
+    console.error('Failed to delete incident ID:', error);
     throw new Error('STORAGE_ERROR');
   }
 }
